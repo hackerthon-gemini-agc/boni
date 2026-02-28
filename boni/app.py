@@ -383,12 +383,13 @@ class BoniApp(rumps.App):
             self._collapse_timer = None
 
         try:
-            from AppKit import NSAnimationContext, NSMakeRect, NSScreen
+            from AppKit import NSAnimationContext, NSMakeRect
 
-            screen = NSScreen.mainScreen().frame()
             w, h = self._EXPANDED_SIZE
-            x = screen.size.width - w - 20
-            y = screen.size.height - h - 45
+            # Expand from current position — keep top-right corner anchored
+            cur = self.panel.frame()
+            x = cur.origin.x + cur.size.width - w
+            y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
             # Update content view size + corner radius
@@ -431,13 +432,13 @@ class BoniApp(rumps.App):
             return
 
         try:
-            from AppKit import NSAnimationContext, NSMakeRect, NSScreen
+            from AppKit import NSAnimationContext, NSMakeRect
 
-            screen = NSScreen.mainScreen().frame()
             w, h = self._COLLAPSED_SIZE
-            # Keep top-right alignment
-            x = screen.size.width - w - 20
-            y = screen.size.height - h - 45
+            # Collapse at current position — keep top-right corner anchored
+            cur = self.panel.frame()
+            x = cur.origin.x + cur.size.width - w
+            y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
             # Shrink content view + round corners
@@ -574,29 +575,54 @@ class BoniApp(rumps.App):
             self._boni_label.setTextColor_(NSColor.secondaryLabelColor())
             self._boni_label.setAlphaValue_(0.0)  # hidden when collapsed
 
-            # Click handler — create a clickable transparent button overlay
+            # Drag + click handler: custom transparent view
+            # - Drag moves the window (mouseDown+mouseDragged)
+            # - Click (no drag) expands when collapsed
             app_ref = self
 
-            class _ClickDelegate(NSObject):
-                def handleClick_(self, sender):
-                    if app_ref._collapsed:
+            from AppKit import NSView as _NSView
+
+            class _DragClickView(_NSView):
+                def initWithFrame_(self, frame):
+                    self = super().initWithFrame_(frame)
+                    if self is None:
+                        return None
+                    self._dragged = False
+                    self._mouse_down_origin = None
+                    return self
+
+                def mouseDown_(self, event):
+                    self._dragged = False
+                    self._mouse_down_origin = event.locationInWindow()
+
+                def mouseDragged_(self, event):
+                    self._dragged = True
+                    # Move window by delta
+                    origin = self._mouse_down_origin
+                    current = event.locationInWindow()
+                    win = self.window()
+                    if win and origin:
+                        frame = win.frame()
+                        dx = current.x - origin.x
+                        dy = current.y - origin.y
+                        frame.origin.x += dx
+                        frame.origin.y += dy
+                        win.setFrameOrigin_(frame.origin)
+
+                def mouseUp_(self, event):
+                    if not self._dragged and app_ref._collapsed:
                         app_ref._expand_panel()
 
-            self._click_delegate = _ClickDelegate.alloc().init()
-
-            from AppKit import NSButton, NSButtonTypeMomentaryLight
-            click_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, ew, eh))
-            click_btn.setTransparent_(True)
-            click_btn.setButtonType_(NSButtonTypeMomentaryLight)
-            click_btn.setTarget_(self._click_delegate)
-            click_btn.setAction_("handleClick:")
-            self._click_button = click_btn
+            drag_view = _DragClickView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, ew, eh)
+            )
+            self._drag_view = drag_view
 
             # Assemble
             effect.addSubview_(self._emoji_field)
             effect.addSubview_(self._message_field)
             effect.addSubview_(self._boni_label)
-            effect.addSubview_(click_btn)
+            effect.addSubview_(drag_view)
             panel.setContentView_(effect)
             panel.invalidateShadow()  # shadow follows rounded content
 
