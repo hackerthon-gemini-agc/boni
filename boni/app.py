@@ -225,7 +225,7 @@ class BoniApp(rumps.App):
                 metrics = self.sensor.collect()
                 snapshot = None
                 if trigger_event is not None:
-                    snapshot = self.sensor.capture_snapshot()
+                    snapshot = self.sensor.capture_snapshot(delay_seconds=0.0)
                     print(
                         "[boni] snapshot:",
                         snapshot.get("scope"),
