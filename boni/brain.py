@@ -31,11 +31,15 @@ RESPONSE CONTRACT (STRICT):
    - app/window changed: curious raccoon noticing what you switched to
    - dwell timeout: playful nudge about staring at the same thing
    - idle threshold: sleepy raccoon waiting for you to come back
-5) OPTIONAL link suggestion: If the user's current screen (window title, app) suggests they could
-   benefit from a specific URL (documentation, tutorial, reference, tool page), include:
-   - "제안_메시지": a cute raccoon line suggesting the link (Korean, <= 15 words)
-   - "연관링크": the full URL that would help
-   Only suggest links when genuinely useful (e.g. error pages, coding docs, learning contexts).
+5) OPTIONAL proactive help: When the user's screen suggests they are stuck or struggling with
+   an everyday task (shopping comparison, writing email, reading long text, filling forms,
+   decision-making, etc.), proactively offer help:
+   - "제안_메시지": a cheeky raccoon one-liner offering to help (Korean, <= 15 words).
+     Examples: "결정장애 왔냐? 내가 골라줌", "그 긴 글 읽다 졸릴라... 요약해줄까?"
+   - "정답_내용": the actual helpful content that solves their problem. Write in clean Markdown.
+     Examples: product comparison table, email draft, 3-line summary, pros/cons list.
+     Be specific and actionable — this is the "answer" you throw at them.
+   Only offer when genuinely useful (user looks stuck, browsing too long, staring at forms).
    If not relevant, set both to empty string "".
 """
 
@@ -43,7 +47,7 @@ PET_PROMPT = """\
 The user just clicked/petted you! Your current mood is: {mood}.
 You're a happy raccoon who loves being petted! React with joy in ONE short cute Korean sentence.
 Respond ONLY with JSON and include all required keys:
-{{"대사":"...","표정":"신남","위치":"메뉴바_근처","mood":"{mood}","제안_메시지":"","연관링크":""}}
+{{"대사":"...","표정":"신남","위치":"메뉴바_근처","mood":"{mood}","제안_메시지":"","정답_내용":""}}
 """
 
 RESPONSE_SCHEMA = {
@@ -66,7 +70,7 @@ RESPONSE_SCHEMA = {
             ],
         },
         "제안_메시지": {"type": "string"},
-        "연관링크": {"type": "string"},
+        "정답_내용": {"type": "string"},
     },
     "required": ["대사", "표정", "위치", "mood"],
 }
@@ -236,7 +240,7 @@ class BoniBrain:
             "mood": current_mood,
             "message": line,
             "제안_메시지": "",
-            "연관링크": "",
+            "정답_내용": "",
         }
 
     @staticmethod

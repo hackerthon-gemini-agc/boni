@@ -2,10 +2,13 @@
 
 import json
 import os
+import tempfile
 import threading
 import uuid
 import webbrowser
 from pathlib import Path
+
+import markdown
 
 import rumps
 
@@ -59,8 +62,8 @@ class BoniApp(rumps.App):
         )
         self.recent_menu = rumps.MenuItem("📜 Recent")
         self.recent_menu.add(rumps.MenuItem("(no history yet)"))
-        self.suggestion_item = rumps.MenuItem("🔗 ...", callback=self._on_suggestion)
-        self._suggestion_url = None
+        self.suggestion_item = rumps.MenuItem("💡 ...", callback=self._on_suggestion)
+        self._current_answer = ""
 
         self.api_item = rumps.MenuItem("🔑 Set API Key", callback=self._on_set_api_key)
         self.quit_item = rumps.MenuItem("Quit boni", callback=self._on_quit)
@@ -292,16 +295,16 @@ class BoniApp(rumps.App):
                 self.messages_history = self.messages_history[-5:]
             self.current_message = new_message
 
-        # Handle link suggestion
+        # Handle proactive answer suggestion
         suggest_msg = result.get("제안_메시지", "")
-        suggest_url = result.get("연관링크", "")
-        if suggest_msg and suggest_url:
-            self._suggestion_url = suggest_url
+        answer_content = result.get("정답_내용", "")
+        if suggest_msg and answer_content:
+            self._current_answer = answer_content
             display_suggest = suggest_msg if len(suggest_msg) <= 40 else suggest_msg[:37] + "..."
-            self.suggestion_item.title = f"🔗 {display_suggest}"
+            self.suggestion_item.title = f"💡 {display_suggest}"
             self.suggestion_item.hidden = False
         else:
-            self._suggestion_url = None
+            self._current_answer = ""
             self.suggestion_item.hidden = True
 
         self._refresh_display()
@@ -497,11 +500,69 @@ class BoniApp(rumps.App):
         threading.Thread(target=bg, daemon=True).start()
 
     def _on_suggestion(self, sender):
-        """Open the suggested URL in the default browser."""
-        if self._suggestion_url:
-            webbrowser.open(self._suggestion_url)
-            self._suggestion_url = None
-            self.suggestion_item.hidden = True
+        """Render the AI answer as HTML and open in browser."""
+        if not self._current_answer:
+            return
+
+        html_body = markdown.markdown(
+            self._current_answer,
+            extensions=["tables", "fenced_code"],
+        )
+        html_content = f"""\
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>boni</title>
+<style>
+  body {{
+    background: #f9f9f9; color: #333;
+    font-family: 'Apple SD Gothic Neo', -apple-system, sans-serif;
+    padding: 40px; line-height: 1.8; max-width: 640px; margin: 0 auto;
+  }}
+  .card {{
+    background: white; padding: 32px; border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  }}
+  h2 {{ color: #ff5e5e; margin-top: 0; }}
+  hr {{ border: 0; border-top: 1px solid #eee; margin: 20px 0; }}
+  .content {{ font-size: 16px; }}
+  .content table {{
+    border-collapse: collapse; width: 100%; margin: 16px 0;
+  }}
+  .content th, .content td {{
+    border: 1px solid #ddd; padding: 10px 14px; text-align: left;
+  }}
+  .content th {{ background: #fafafa; }}
+  .content code {{
+    background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: 14px;
+  }}
+  .content pre {{ background: #f4f4f4; padding: 16px; border-radius: 8px; overflow-x: auto; }}
+  .footer {{
+    color: #999; font-size: 13px; text-align: right; margin-top: 32px;
+  }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>답답해서 내가 한다</h2>
+  <hr>
+  <div class="content">{html_body}</div>
+  <p class="footer"><em>"다 떠먹여 줬으니까 이제 알아서 해라." — boni</em></p>
+</div>
+</body>
+</html>"""
+
+        temp_path = os.path.join(tempfile.gettempdir(), "boni_answer.html")
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        webbrowser.open(f"file://{temp_path}")
+
+        self.current_message = "정답 띄워줬다. 닫지 말고 정독해."
+        self._current_answer = ""
+        self.suggestion_item.hidden = True
+        self._refresh_display()
 
     def _on_toggle_float(self, sender):
         """Show/hide the floating character window."""
