@@ -2,13 +2,9 @@
 
 import json
 import os
-import tempfile
 import threading
 import uuid
-import webbrowser
 from pathlib import Path
-
-import markdown
 
 import rumps
 
@@ -53,6 +49,8 @@ class BoniApp(rumps.App):
         self._EXPANDED_SIZE = (640, 220)
         self._AUTO_COLLAPSE_SECONDS = 8
         self._bubble_left = False  # True = bubble appears left of image
+        self._showing_answer = False  # True = answer panel is expanded
+        self._ANSWER_EXPANDED_SIZE = (640, 500)
 
         # Load config (sets api_key and user_id)
         self._load_config()
@@ -366,6 +364,8 @@ class BoniApp(rumps.App):
             return
         if not self.floating_visible:
             return
+        if self._showing_answer:
+            return  # Don't interrupt answer view
 
         try:
             self._message_field.setStringValue_(f"\u201c{self.current_message}\u201d")
@@ -451,6 +451,71 @@ class BoniApp(rumps.App):
         except Exception as e:
             print(f"[boni] Expand error: {e}")
 
+    def _expand_answer_panel(self):
+        """Expand the bubble downward to show the answer content inline."""
+        if self.panel is None:
+            return
+
+        # Cancel any pending collapse
+        if self._collapse_timer:
+            self._collapse_timer.cancel()
+            self._collapse_timer = None
+
+        try:
+            from AppKit import NSAnimationContext, NSMakeRect, NSScreen
+
+            w, h = self._ANSWER_EXPANDED_SIZE
+            cur = self.panel.frame()
+
+            if self._bubble_left:
+                x = cur.origin.x + cur.size.width - w
+            else:
+                x = cur.origin.x
+            # Anchor top edge
+            y = cur.origin.y + cur.size.height - h
+            target_frame = NSMakeRect(x, y, w, h)
+
+            self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
+
+            # Image stays at top
+            img_y = h - 190
+            if self._bubble_left:
+                self._image_view.setFrame_(NSMakeRect(w - 160, img_y, 140, 160))
+                self._effect_view.setFrame_(NSMakeRect(10, 10, w - 170, h - 20))
+            else:
+                self._image_view.setFrame_(NSMakeRect(20, img_y, 140, 160))
+                self._effect_view.setFrame_(NSMakeRect(160, 10, w - 170, h - 20))
+            self._effect_view.layer().setCornerRadius_(20)
+
+            ev_h = h - 20  # effect view height
+            # Message at top of effect view
+            self._message_field.setFrame_(NSMakeRect(20, ev_h - 150, 420, 120))
+            # Divider area — suggestion link
+            self._suggestion_field.setFrame_(NSMakeRect(20, ev_h - 180, 400, 30))
+            # Answer content fills remaining space
+            self._answer_field.setStringValue_(self._current_answer)
+            self._answer_field.setFrame_(NSMakeRect(20, 40, 420, ev_h - 230))
+            # Boni label at bottom
+            self._boni_label.setFrame_(NSMakeRect(310, 10, 140, 36))
+
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.3)
+            self.panel.animator().setFrame_display_(target_frame, True)
+            self._effect_view.animator().setAlphaValue_(0.95)
+            self._message_field.animator().setAlphaValue_(1.0)
+            self._suggestion_field.animator().setAlphaValue_(1.0)
+            self._answer_field.animator().setAlphaValue_(1.0)
+            self._boni_label.animator().setAlphaValue_(1.0)
+            NSAnimationContext.endGrouping()
+
+            self._collapsed = False
+            self._showing_answer = True
+            self.panel.orderFront_(None)
+            # No auto-collapse when showing answer
+
+        except Exception as e:
+            print(f"[boni] Answer expand error: {e}")
+
     def _schedule_collapse(self):
         """Set flag for main thread to collapse (called from timer thread)."""
         self._pending_collapse = True
@@ -486,9 +551,11 @@ class BoniApp(rumps.App):
             self._message_field.animator().setAlphaValue_(0.0)
             self._boni_label.animator().setAlphaValue_(0.0)
             self._suggestion_field.animator().setAlphaValue_(0.0)
+            self._answer_field.animator().setAlphaValue_(0.0)
             NSAnimationContext.endGrouping()
 
             self._collapsed = True
+            self._showing_answer = False
 
         except Exception as e:
             print(f"[boni] Collapse error: {e}")
@@ -622,6 +689,23 @@ class BoniApp(rumps.App):
             self._suggestion_field.setTextColor_(NSColor.systemBlueColor())
             self._suggestion_field.setAlphaValue_(0.0)
 
+            # Answer content field — hidden initially, shown when suggestion clicked
+            self._answer_field = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(20, 40, 420, 260)
+            )
+            self._answer_field.setStringValue_("")
+            self._answer_field.setFont_(NSFont.systemFontOfSize_(14))
+            self._answer_field.setBezeled_(False)
+            self._answer_field.setDrawsBackground_(False)
+            self._answer_field.setEditable_(False)
+            self._answer_field.setSelectable_(True)
+            self._answer_field.setTextColor_(NSColor.labelColor())
+            self._answer_field.cell().setWraps_(True)
+            self._answer_field.cell().setLineBreakMode_(
+                NSLineBreakByWordWrapping
+            )
+            self._answer_field.setAlphaValue_(0.0)
+
             # Drag + click handler using objc.super
             app_ref = self
 
@@ -655,6 +739,8 @@ class BoniApp(rumps.App):
                     if not self._dragged:
                         if app_ref._collapsed:
                             app_ref._expand_panel()
+                        elif app_ref._showing_answer:
+                            app_ref._collapse_panel()
                         elif app_ref._current_answer:
                             app_ref._on_suggestion(None)
 
@@ -671,6 +757,7 @@ class BoniApp(rumps.App):
             effect.addSubview_(self._message_field)
             effect.addSubview_(self._boni_label)
             effect.addSubview_(self._suggestion_field)
+            effect.addSubview_(self._answer_field)
             container.addSubview_(drag_view)
             self._container_view = container
             panel.setContentView_(container)
@@ -714,69 +801,10 @@ class BoniApp(rumps.App):
         threading.Thread(target=bg, daemon=True).start()
 
     def _on_suggestion(self, sender):
-        """Render the AI answer as HTML and open in browser."""
+        """Show the AI answer inline by expanding the bubble downward."""
         if not self._current_answer:
             return
-
-        html_body = markdown.markdown(
-            self._current_answer,
-            extensions=["tables", "fenced_code"],
-        )
-        html_content = f"""\
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>boni</title>
-<style>
-  body {{
-    background: #f9f9f9; color: #333;
-    font-family: 'Apple SD Gothic Neo', -apple-system, sans-serif;
-    padding: 40px; line-height: 1.8; max-width: 640px; margin: 0 auto;
-  }}
-  .card {{
-    background: white; padding: 32px; border-radius: 16px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-  }}
-  h2 {{ color: #ff5e5e; margin-top: 0; }}
-  hr {{ border: 0; border-top: 1px solid #eee; margin: 20px 0; }}
-  .content {{ font-size: 16px; }}
-  .content table {{
-    border-collapse: collapse; width: 100%; margin: 16px 0;
-  }}
-  .content th, .content td {{
-    border: 1px solid #ddd; padding: 10px 14px; text-align: left;
-  }}
-  .content th {{ background: #fafafa; }}
-  .content code {{
-    background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: 14px;
-  }}
-  .content pre {{ background: #f4f4f4; padding: 16px; border-radius: 8px; overflow-x: auto; }}
-  .footer {{
-    color: #999; font-size: 13px; text-align: right; margin-top: 32px;
-  }}
-</style>
-</head>
-<body>
-<div class="card">
-  <h2>답답해서 내가 한다</h2>
-  <hr>
-  <div class="content">{html_body}</div>
-  <p class="footer"><em>"다 떠먹여 줬으니까 이제 알아서 해라." — boni</em></p>
-</div>
-</body>
-</html>"""
-
-        temp_path = os.path.join(tempfile.gettempdir(), "boni_answer.html")
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-        webbrowser.open(f"file://{temp_path}")
-
-        self.current_message = "정답 띄워줬다. 닫지 말고 정독해."
-        self._current_answer = ""
-        self.suggestion_item.hidden = True
-        self._refresh_display()
+        self._expand_answer_panel()
 
     def _on_toggle_float(self, sender):
         """Show/hide the floating character window."""
