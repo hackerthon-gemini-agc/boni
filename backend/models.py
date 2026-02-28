@@ -26,6 +26,7 @@ class MemoryCreate(BaseModel):
     metrics: Metrics
     reaction: Reaction
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    user_id: str = "anonymous"
 
 
 class MemoryRecord(BaseModel):
@@ -34,11 +35,13 @@ class MemoryRecord(BaseModel):
     reaction: Reaction
     timestamp: datetime
     embedding_text: str = ""
+    user_id: str = "anonymous"
 
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
+    user_id: str = "anonymous"
 
 
 class MemorySearchResult(BaseModel):

@@ -31,8 +31,11 @@ class VectorSearchClient:
             self._endpoint = MatchingEngineIndexEndpoint(self.index_endpoint_id)
         return self._endpoint
 
-    def upsert(self, datapoint_id: str, embedding: list[float]) -> None:
-        """Upsert a single vector into the deployed index via REST API."""
+    def upsert(self, datapoint_id: str, embedding: list[float], user_id: str = "anonymous") -> None:
+        """Upsert a single vector into the deployed index via REST API.
+
+        datapointId format: {user_id}_{memory_id}
+        """
         import google.auth
         import google.auth.transport.requests
         import requests
@@ -40,6 +43,8 @@ class VectorSearchClient:
         credentials, _ = google.auth.default()
         auth_req = google.auth.transport.requests.Request()
         credentials.refresh(auth_req)
+
+        prefixed_id = f"{user_id}_{datapoint_id}"
 
         # Use the index resource directly for upsert (not the endpoint)
         # Get the index ID from the deployed index
@@ -52,7 +57,7 @@ class VectorSearchClient:
         payload = {
             "datapoints": [
                 {
-                    "datapointId": datapoint_id,
+                    "datapointId": prefixed_id,
                     "featureVector": embedding,
                 }
             ]
@@ -78,22 +83,30 @@ class VectorSearchClient:
                 self._index_id_cache = os.environ.get("VECTOR_SEARCH_INDEX_ID", "")
         return self._index_id_cache
 
-    def search(self, query_embedding: list[float], top_k: int = 5) -> list[dict]:
+    def search(self, query_embedding: list[float], top_k: int = 5, user_id: str = "anonymous") -> list[dict]:
         """Search for nearest neighbors by embedding vector.
 
-        Returns list of {"id": str, "distance": float}.
+        Fetches extra results and filters by user_id prefix to ensure
+        we return up to top_k results for the requesting user.
+        Returns list of {"id": str, "distance": float} with original memory IDs (prefix stripped).
         """
+        # Fetch more than needed since we filter by user_id after
+        fetch_k = top_k * 5
         responses = self.endpoint.find_neighbors(
             deployed_index_id=self.deployed_index_id,
             queries=[query_embedding],
-            num_neighbors=top_k,
+            num_neighbors=fetch_k,
         )
 
+        prefix = f"{user_id}_"
         results = []
         if responses:
             for neighbor in responses[0]:
-                results.append({
-                    "id": neighbor.id,
-                    "distance": neighbor.distance,
-                })
+                if neighbor.id.startswith(prefix):
+                    results.append({
+                        "id": neighbor.id[len(prefix):],  # strip user_id prefix
+                        "distance": neighbor.distance,
+                    })
+                    if len(results) >= top_k:
+                        break
         return results

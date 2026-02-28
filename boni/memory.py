@@ -10,8 +10,9 @@ class BoniMemory:
 
     TIMEOUT = 5  # seconds
 
-    def __init__(self, backend_url: str):
+    def __init__(self, backend_url: str, user_id: str = "anonymous"):
         self.backend_url = backend_url.rstrip("/")
+        self.user_id = user_id
 
     def store(self, metrics: dict, reaction: dict) -> bool:
         """Store current metrics + reaction to backend.
@@ -36,6 +37,7 @@ class BoniMemory:
                     "mood": reaction.get("mood", "chill"),
                 },
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "user_id": self.user_id,
             }
             resp = requests.post(
                 f"{self.backend_url}/api/v1/memories",
@@ -72,7 +74,7 @@ class BoniMemory:
             )
             resp = requests.post(
                 f"{self.backend_url}/api/v1/memories/search",
-                json={"query": query, "top_k": top_k},
+                json={"query": query, "top_k": top_k, "user_id": self.user_id},
                 timeout=self.TIMEOUT,
             )
             resp.raise_for_status()

@@ -3,6 +3,7 @@
 import json
 import os
 import threading
+import uuid
 from pathlib import Path
 
 import rumps
@@ -30,6 +31,7 @@ class BoniApp(rumps.App):
         self.current_message = "Waking up..."
         self.messages_history = []
         self.api_key = None
+        self.user_id = None
         self.floating_visible = True
         self.panel = None
         self._pending_update = None
@@ -37,14 +39,14 @@ class BoniApp(rumps.App):
         self._last_metrics = None  # cached for memory store
         self._last_reaction = None  # cached for memory store
 
+        # Load config (sets api_key and user_id)
+        self._load_config()
+
         # Memory system (activated by BONI_MEMORY_URL env var)
         memory_url = os.environ.get("BONI_MEMORY_URL")
-        self.memory = BoniMemory(memory_url) if memory_url else None
+        self.memory = BoniMemory(memory_url, user_id=self.user_id) if memory_url else None
         if self.memory:
-            print(f"[boni] Memory enabled: {memory_url}")
-
-        # Load config
-        self._load_config()
+            print(f"[boni] Memory enabled: {memory_url} (user_id={self.user_id})")
 
         # Build menu
         self.msg_item = rumps.MenuItem(
@@ -85,19 +87,37 @@ class BoniApp(rumps.App):
     # ── Config ──────────────────────────────────────────────────────
 
     def _load_config(self):
+        config = {}
         self.api_key = os.environ.get("GEMINI_API_KEY")
-        if not self.api_key and CONFIG_FILE.exists():
+        if CONFIG_FILE.exists():
             try:
                 with open(CONFIG_FILE) as f:
                     config = json.load(f)
-                self.api_key = config.get("api_key")
+                if not self.api_key:
+                    self.api_key = config.get("api_key")
             except Exception:
                 pass
 
+        # Load or auto-generate user_id
+        self.user_id = config.get("user_id")
+        if not self.user_id:
+            self.user_id = uuid.uuid4().hex
+            print(f"[boni] Generated new user_id: {self.user_id}")
+            self._save_config()
+
     def _save_config(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        config = {}
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE) as f:
+                    config = json.load(f)
+            except Exception:
+                pass
+        config["api_key"] = self.api_key
+        config["user_id"] = self.user_id
         with open(CONFIG_FILE, "w") as f:
-            json.dump({"api_key": self.api_key}, f)
+            json.dump(config, f)
 
     # ── Initial mood ────────────────────────────────────────────────
 

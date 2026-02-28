@@ -22,7 +22,7 @@
 ### Cloud Storage
 | 버킷 | 경로 | 용도 |
 |-------|------|------|
-| `gs://boni-memories` | `raw/{date}/{id}.json` | 메모리 원시 JSON 저장 |
+| `gs://boni-memories` | `raw/{user_id}/{date}/{id}.json` | 메모리 원시 JSON 저장 (사용자별 분리) |
 
 ### Artifact Registry
 | 리포지토리 | 형식 | 용도 |
@@ -163,6 +163,22 @@ export BONI_MEMORY_URL="https://boni-memory-164559031993.asia-northeast3.run.app
 ```
 
 또는 `~/.boni/config.json`에 추가하거나, 실행 스크립트에 포함.
+
+### user_id 자동 관리
+
+첫 실행 시 `~/.boni/config.json`에 UUID 기반 `user_id`가 자동 생성됩니다.
+이 ID로 메모리 저장/검색이 사용자별로 분리됩니다.
+
+```json
+{
+  "api_key": "YOUR_GEMINI_API_KEY",
+  "user_id": "a1b2c3d4e5f6..."
+}
+```
+
+- GCS 경로: `raw/{user_id}/{date}/{memory_id}.json`
+- Vector Search ID: `{user_id}_{memory_id}`
+- `user_id`가 없는 기존 데이터는 `"anonymous"`로 간주됩니다.
 
 ## 7. 검증
 

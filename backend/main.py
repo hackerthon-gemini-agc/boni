@@ -61,6 +61,8 @@ def store_memory(body: MemoryCreate):
     reaction_dict = body.reaction.model_dump()
     embedding_text = compose_embedding_text(metrics_dict, reaction_dict)
 
+    user_id = body.user_id
+
     # 2. Build full record
     record = MemoryRecord(
         id=memory_id,
@@ -68,18 +70,19 @@ def store_memory(body: MemoryCreate):
         reaction=body.reaction,
         timestamp=body.timestamp,
         embedding_text=embedding_text,
+        user_id=user_id,
     )
 
-    # 3. Save raw JSON to Cloud Storage
+    # 3. Save raw JSON to Cloud Storage (scoped by user_id)
     storage = get_storage()
-    storage.save(memory_id, record.model_dump())
+    storage.save(memory_id, record.model_dump(), user_id=user_id)
 
-    # 4. Generate embedding and upsert to Vector Search
+    # 4. Generate embedding and upsert to Vector Search (prefixed by user_id)
     embedding = generate_embedding(embedding_text)
     vs = get_vector_search()
-    vs.upsert(memory_id, embedding)
+    vs.upsert(memory_id, embedding, user_id=user_id)
 
-    return {"id": memory_id, "status": "stored"}
+    return {"id": memory_id, "status": "stored", "user_id": user_id}
 
 
 # ── Search memories ──────────────────────────────────────────────
@@ -91,9 +94,9 @@ def search_memories(body: SearchRequest):
     # 1. Embed the query
     query_embedding = generate_embedding(body.query)
 
-    # 2. Find nearest neighbors
+    # 2. Find nearest neighbors (filtered by user_id)
     vs = get_vector_search()
-    neighbors = vs.search(query_embedding, top_k=body.top_k)
+    neighbors = vs.search(query_embedding, top_k=body.top_k, user_id=body.user_id)
 
     if not neighbors:
         return SearchResponse(memories=[])
@@ -105,9 +108,9 @@ def search_memories(body: SearchRequest):
         mem_id = neighbor["id"]
         distance = neighbor["distance"]
 
-        # Search across date directories for the memory
+        # Search across date directories for the memory (scoped by user_id)
         # Vector Search returns IDs, we need to find the corresponding GCS object
-        raw_data = _find_memory_in_storage(storage, mem_id)
+        raw_data = _find_memory_in_storage(storage, mem_id, user_id=body.user_id)
         if raw_data is None:
             continue
 
@@ -124,15 +127,15 @@ def search_memories(body: SearchRequest):
     return SearchResponse(memories=results)
 
 
-def _find_memory_in_storage(storage: MemoryStorage, memory_id: str) -> dict | None:
-    """Find a memory record in GCS by scanning recent date directories."""
+def _find_memory_in_storage(storage: MemoryStorage, memory_id: str, user_id: str = "anonymous") -> dict | None:
+    """Find a memory record in GCS by scanning date directories for a user."""
     from google.cloud import storage as gcs
 
     client = storage.client
     bucket = storage.bucket
-    prefix = "raw/"
+    prefix = f"raw/{user_id}/"
 
-    # List blobs matching the memory ID
+    # List blobs matching the memory ID within user's directory
     blobs = list(bucket.list_blobs(prefix=prefix, match_glob=f"**/{memory_id}.json"))
     if blobs:
         import json

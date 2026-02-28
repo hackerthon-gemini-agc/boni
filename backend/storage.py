@@ -13,13 +13,13 @@ class MemoryStorage:
         self.client = storage.Client()
         self.bucket = self.client.bucket(bucket_name)
 
-    def save(self, memory_id: str, data: dict) -> str:
+    def save(self, memory_id: str, data: dict, user_id: str = "anonymous") -> str:
         """Save raw memory JSON to GCS.
 
-        Path format: raw/{date}/{memory_id}.json
+        Path format: raw/{user_id}/{date}/{memory_id}.json
         """
         date_str = datetime.utcnow().strftime("%Y-%m-%d")
-        blob_path = f"raw/{date_str}/{memory_id}.json"
+        blob_path = f"raw/{user_id}/{date_str}/{memory_id}.json"
         blob = self.bucket.blob(blob_path)
         blob.upload_from_string(
             json.dumps(data, default=str),
@@ -27,9 +27,9 @@ class MemoryStorage:
         )
         return blob_path
 
-    def load(self, memory_id: str, date_str: str) -> dict | None:
+    def load(self, memory_id: str, date_str: str, user_id: str = "anonymous") -> dict | None:
         """Load a memory record by ID and date."""
-        blob_path = f"raw/{date_str}/{memory_id}.json"
+        blob_path = f"raw/{user_id}/{date_str}/{memory_id}.json"
         blob = self.bucket.blob(blob_path)
         if not blob.exists():
             return None
