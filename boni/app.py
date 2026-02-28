@@ -405,8 +405,9 @@ class BoniApp(rumps.App):
             y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
-            # Resize container + subviews
+            # Resize container + drag view + subviews
             self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._drag_view.setFrame_(NSMakeRect(0, 0, w, h))
 
             if bubble_left:
                 # Image on right, bubble on left
@@ -419,15 +420,19 @@ class BoniApp(rumps.App):
             self._effect_view.layer().setCornerRadius_(20)
 
             # Message and label (relative to effect view, same for both directions)
-            self._message_field.setFrame_(NSMakeRect(20, 50, 420, 120))
-            self._boni_label.setFrame_(NSMakeRect(310, 10, 140, 36))
-            self._suggestion_field.setFrame_(NSMakeRect(20, 10, 400, 36))
+            ev_w = int(self._effect_view.frame().size.width)
+            ev_h = int(self._effect_view.frame().size.height)
+            self._message_field.setFrame_(NSMakeRect(20, 50, ev_w - 60, 120))
+            self._boni_label.setFrame_(NSMakeRect(ev_w - 160, 10, 140, 36))
+            self._suggestion_field.setFrame_(NSMakeRect(20, 10, ev_w - 60, 36))
+            self._close_label.setFrame_(NSMakeRect(ev_w - 35, ev_h - 35, 30, 30))
 
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.3)
             self.panel.animator().setFrame_display_(target_frame, True)
             self._effect_view.animator().setAlphaValue_(0.95)
             self._message_field.animator().setAlphaValue_(1.0)
+            self._close_label.animator().setAlphaValue_(1.0)
 
             # Show suggestion link or boni label
             if self._current_answer:
@@ -476,6 +481,7 @@ class BoniApp(rumps.App):
             target_frame = NSMakeRect(x, y, w, h)
 
             self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._drag_view.setFrame_(NSMakeRect(0, 0, w, h))
 
             # Image stays at top
             img_y = h - 190
@@ -487,16 +493,19 @@ class BoniApp(rumps.App):
                 self._effect_view.setFrame_(NSMakeRect(160, 10, w - 170, h - 20))
             self._effect_view.layer().setCornerRadius_(20)
 
+            ev_w = int(self._effect_view.frame().size.width)
             ev_h = h - 20  # effect view height
             # Message at top of effect view
-            self._message_field.setFrame_(NSMakeRect(20, ev_h - 150, 420, 120))
+            self._message_field.setFrame_(NSMakeRect(20, ev_h - 150, ev_w - 60, 120))
             # Divider area — suggestion link
-            self._suggestion_field.setFrame_(NSMakeRect(20, ev_h - 180, 400, 30))
+            self._suggestion_field.setFrame_(NSMakeRect(20, ev_h - 180, ev_w - 60, 30))
             # Answer content fills remaining space
             self._answer_field.setStringValue_(self._current_answer)
-            self._answer_field.setFrame_(NSMakeRect(20, 40, 420, ev_h - 230))
+            self._answer_field.setFrame_(NSMakeRect(20, 40, ev_w - 40, ev_h - 230))
+            # Close button at top-right
+            self._close_label.setFrame_(NSMakeRect(ev_w - 35, ev_h - 35, 30, 30))
             # Boni label at bottom
-            self._boni_label.setFrame_(NSMakeRect(310, 10, 140, 36))
+            self._boni_label.setFrame_(NSMakeRect(ev_w - 160, 10, 140, 36))
 
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.3)
@@ -505,6 +514,7 @@ class BoniApp(rumps.App):
             self._message_field.animator().setAlphaValue_(1.0)
             self._suggestion_field.animator().setAlphaValue_(1.0)
             self._answer_field.animator().setAlphaValue_(1.0)
+            self._close_label.animator().setAlphaValue_(1.0)
             self._boni_label.animator().setAlphaValue_(1.0)
             NSAnimationContext.endGrouping()
 
@@ -552,6 +562,7 @@ class BoniApp(rumps.App):
             self._boni_label.animator().setAlphaValue_(0.0)
             self._suggestion_field.animator().setAlphaValue_(0.0)
             self._answer_field.animator().setAlphaValue_(0.0)
+            self._close_label.animator().setAlphaValue_(0.0)
             NSAnimationContext.endGrouping()
 
             self._collapsed = True
@@ -706,6 +717,20 @@ class BoniApp(rumps.App):
             )
             self._answer_field.setAlphaValue_(0.0)
 
+            # Close (collapse) button — "✕" at top-right of effect view
+            self._close_label = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(0, 0, 30, 30)
+            )
+            self._close_label.setStringValue_("✕")
+            self._close_label.setFont_(NSFont.systemFontOfSize_(18))
+            self._close_label.setBezeled_(False)
+            self._close_label.setDrawsBackground_(False)
+            self._close_label.setEditable_(False)
+            self._close_label.setSelectable_(False)
+            self._close_label.setTextColor_(NSColor.secondaryLabelColor())
+            self._close_label.setAlignment_(1)  # NSTextAlignmentCenter
+            self._close_label.setAlphaValue_(0.0)
+
             # Drag + click handler using objc.super
             app_ref = self
 
@@ -739,8 +764,23 @@ class BoniApp(rumps.App):
                     if not self._dragged:
                         if app_ref._collapsed:
                             app_ref._expand_panel()
-                        elif app_ref._showing_answer:
-                            app_ref._collapse_panel()
+                            return
+                        # Check close button hit — convert click to effect view coords
+                        loc = event.locationInWindow()
+                        try:
+                            ev = app_ref._effect_view
+                            pt = ev.convertPoint_fromView_(loc, None)
+                            cf = app_ref._close_label.frame()
+                            # Generous 40x40 hit area centered on the button
+                            pad = 5
+                            if (cf.origin.x - pad <= pt.x <= cf.origin.x + cf.size.width + pad
+                                    and cf.origin.y - pad <= pt.y <= cf.origin.y + cf.size.height + pad):
+                                app_ref._collapse_panel()
+                                return
+                        except Exception:
+                            pass
+                        if app_ref._showing_answer:
+                            pass  # click elsewhere on answer — do nothing
                         elif app_ref._current_answer:
                             app_ref._on_suggestion(None)
 
@@ -758,6 +798,7 @@ class BoniApp(rumps.App):
             effect.addSubview_(self._boni_label)
             effect.addSubview_(self._suggestion_field)
             effect.addSubview_(self._answer_field)
+            effect.addSubview_(self._close_label)
             container.addSubview_(drag_view)
             self._container_view = container
             panel.setContentView_(container)
