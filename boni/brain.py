@@ -155,7 +155,7 @@ class BoniBrain:
                     response_mime_type="application/json",
                     response_schema=RESPONSE_SCHEMA,
                     temperature=1.0,
-                    max_output_tokens=1024,
+                    max_output_tokens=8192,
                 ),
             )
             return self._parse(response.text, current_mood)
@@ -176,7 +176,7 @@ class BoniBrain:
                 response_mime_type="application/json",
                 response_schema=RESPONSE_SCHEMA,
                 temperature=0.9,
-                max_output_tokens=1024,
+                max_output_tokens=8192,
             ),
         )
         return self._parse(response.text, fallback_mood)
