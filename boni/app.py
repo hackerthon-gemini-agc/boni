@@ -8,6 +8,7 @@ from pathlib import Path
 import rumps
 
 from .brain import BoniBrain
+from .memory import BoniMemory
 from .mood import DEFAULT_MESSAGES, MOOD_EMOJI, Mood, determine_mood
 from .sensor import SystemSensor
 
@@ -15,6 +16,7 @@ CONFIG_DIR = Path.home() / ".boni"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 UPDATE_INTERVAL = 30  # seconds between AI updates
+MEMORY_STORE_INTERVAL = 60  # seconds between memory stores
 
 
 class BoniApp(rumps.App):
@@ -34,6 +36,14 @@ class BoniApp(rumps.App):
         self.panel = None
         self._pending_update = None
         self._update_lock = threading.Lock()
+        self._last_metrics = None  # cached for memory store
+        self._last_reaction = None  # cached for memory store
+
+        # Memory system (activated by BONI_MEMORY_URL env var)
+        memory_url = os.environ.get("BONI_MEMORY_URL")
+        self.memory = BoniMemory(memory_url) if memory_url else None
+        if self.memory:
+            print(f"[boni] Memory enabled: {memory_url}")
 
         # Load config
         self._load_config()
@@ -145,6 +155,22 @@ class BoniApp(rumps.App):
         if self.brain:
             self._trigger_ai_update()
 
+    @rumps.timer(MEMORY_STORE_INTERVAL)
+    def _memory_store_timer(self, _):
+        """Store current state to long-term memory every 60 seconds."""
+        if not self.memory:
+            return
+        if self._last_metrics is None or self._last_reaction is None:
+            return
+
+        metrics = self._last_metrics
+        reaction = self._last_reaction
+
+        def bg_store():
+            self.memory.store(metrics, reaction)
+
+        threading.Thread(target=bg_store, daemon=True).start()
+
     @rumps.timer(0.5)
     def _apply_pending(self, _):
         """Check for pending updates from background thread and apply."""
@@ -163,7 +189,13 @@ class BoniApp(rumps.App):
         def bg():
             try:
                 metrics = self.sensor.collect()
-                result = self.brain.react(metrics, self.current_mood.value)
+
+                # Recall past memories if memory system is active
+                memories = None
+                if self.memory:
+                    memories = self.memory.recall(metrics, self.current_mood.value)
+
+                result = self.brain.react(metrics, self.current_mood.value, memories)
                 self._pending_update = {"metrics": metrics, "result": result}
             except Exception as e:
                 print(f"[boni] BG update error: {e}")
@@ -176,6 +208,11 @@ class BoniApp(rumps.App):
         """Apply AI result to state and UI (runs on main thread via timer)."""
         metrics = update["metrics"]
         result = update["result"]
+
+        # Cache for memory store timer
+        if metrics:
+            self._last_metrics = metrics
+            self._last_reaction = result
 
         # Update mood
         mood_str = result.get("mood", "chill")

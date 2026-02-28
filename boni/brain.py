@@ -42,7 +42,7 @@ class BoniBrain:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
 
-    def react(self, metrics: dict, current_mood: str) -> dict:
+    def react(self, metrics: dict, current_mood: str, memories: list | None = None) -> dict:
         """Generate a reaction to the current system state."""
         battery_info = (
             f"{metrics['battery_percent']}%"
@@ -59,9 +59,19 @@ class BoniBrain:
             f"- Active app: {metrics['active_app']}\n"
             f"- Running apps: {metrics['running_apps']}\n"
             f"- Time: {metrics['hour']}:{metrics['minute']:02d}\n"
-            f"- Previous mood: {current_mood}\n\n"
-            f"How do you feel? React in character."
+            f"- Previous mood: {current_mood}\n"
         )
+
+        # Inject past memories if available
+        if memories:
+            prompt += "\n[Past memories — reference naturally if relevant, like a roommate who remembers]\n"
+            for mem in memories:
+                ts = mem.get("timestamp", "")
+                mood = mem.get("reaction", {}).get("mood", "?")
+                msg = mem.get("reaction", {}).get("message", "")
+                prompt += f"- {ts} ({mood}): \"{msg}\"\n"
+
+        prompt += "\nHow do you feel? React in character."
 
         try:
             response = self.client.models.generate_content(
