@@ -391,7 +391,9 @@ class BoniApp(rumps.App):
             y = screen.size.height - h - 45
             target_frame = NSMakeRect(x, y, w, h)
 
-            # Update content view size + corner radius
+            # Update content view sizes + corner radius
+            self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._container_view.layer().setCornerRadius_(16)
             self._effect_view.setFrame_(NSMakeRect(0, 0, w, h))
             self._effect_view.layer().setCornerRadius_(16)
 
@@ -438,7 +440,9 @@ class BoniApp(rumps.App):
             y = screen.size.height - h - 45
             target_frame = NSMakeRect(x, y, w, h)
 
-            # Shrink content view + round corners
+            # Shrink content views + round corners
+            self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._container_view.layer().setCornerRadius_(24)
             self._effect_view.setFrame_(NSMakeRect(0, 0, w, h))
             self._effect_view.layer().setCornerRadius_(24)
 
@@ -502,7 +506,7 @@ class BoniApp(rumps.App):
             panel.setLevel_(NSFloatingWindowLevel)
             panel.setOpaque_(False)
             panel.setBackgroundColor_(NSColor.clearColor())
-            panel.setHasShadow_(True)
+            panel.setHasShadow_(False)
             panel.setMovableByWindowBackground_(True)
             panel.setFloatingPanel_(True)
             panel.setBecomesKeyOnlyIfNeeded_(True)
@@ -511,7 +515,7 @@ class BoniApp(rumps.App):
                 NSWindowCollectionBehaviorCanJoinAllSpaces
                 | NSWindowCollectionBehaviorStationary
             )
-            panel.setAlphaValue_(0.95)
+            panel.setAlphaValue_(1.0)
 
             # Use expanded size for content so subviews are pre-laid-out
             ew, eh = self._EXPANDED_SIZE
@@ -588,12 +592,26 @@ class BoniApp(rumps.App):
             click_btn.setAction_("handleClick:")
             self._click_button = click_btn
 
-            # Assemble
+            # Assemble: container (shadow) -> effect (clipped) -> subviews
+            from AppKit import NSView
+            from CoreGraphics import CGColorCreateGenericRGB
+
+            container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, cw, ch))
+            container.setWantsLayer_(True)
+            container.layer().setCornerRadius_(24)
+            container.layer().setMasksToBounds_(False)
+            container.layer().setShadowOpacity_(0.15)
+            container.layer().setShadowRadius_(8.0)
+            container.layer().setShadowOffset_((0, -2))
+            container.layer().setShadowColor_(CGColorCreateGenericRGB(0, 0, 0, 1))
+            self._container_view = container
+
             effect.addSubview_(self._emoji_field)
             effect.addSubview_(self._message_field)
             effect.addSubview_(self._boni_label)
             effect.addSubview_(click_btn)
-            panel.setContentView_(effect)
+            container.addSubview_(effect)
+            panel.setContentView_(container)
 
             if self.floating_visible:
                 panel.orderFront_(None)
