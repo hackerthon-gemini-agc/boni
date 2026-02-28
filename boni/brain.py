@@ -38,6 +38,29 @@ Respond ONLY with JSON and include all required keys:
 {{"대사":"...","표정":"비웃음","위치":"메뉴바_근처","mood":"{mood}"}}
 """
 
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "대사": {"type": "string"},
+        "표정": {
+            "type": "string",
+            "enum": ["무표정", "비웃음", "노려봄", "한심", "소름", "졸림"],
+        },
+        "위치": {
+            "type": "string",
+            "enum": ["활성창_오른쪽", "활성창_중앙", "메뉴바_근처"],
+        },
+        "mood": {
+            "type": "string",
+            "enum": [
+                "chill", "stuffed", "overheated", "dying",
+                "judgy", "pleased", "nocturnal", "suspicious",
+            ],
+        },
+    },
+    "required": ["대사", "표정", "위치", "mood"],
+}
+
 
 class BoniBrain:
     """Gemini-powered AI brain for boni."""
@@ -130,8 +153,9 @@ class BoniBrain:
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
+                    response_schema=RESPONSE_SCHEMA,
                     temperature=1.0,
-                    max_output_tokens=60,
+                    max_output_tokens=1024,
                 ),
             )
             return self._parse(response.text, current_mood)
@@ -150,8 +174,9 @@ class BoniBrain:
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 response_mime_type="application/json",
+                response_schema=RESPONSE_SCHEMA,
                 temperature=0.9,
-                max_output_tokens=180,
+                max_output_tokens=1024,
             ),
         )
         return self._parse(response.text, fallback_mood)
@@ -204,7 +229,8 @@ class BoniBrain:
 
     @staticmethod
     def _parse(text: str, fallback_mood: str = "chill") -> dict:
-        """Parse JSON from Gemini response, handling markdown wrapping."""
+        """Parse JSON from Gemini response, handling markdown wrapping and preamble text."""
+        print(f"[boni brain] raw response: {text!r}")
         text = text.strip()
         if text.startswith("```"):
             text = text.split("```")[1]
@@ -213,8 +239,17 @@ class BoniBrain:
             text = text.strip()
         try:
             parsed = json.loads(text)
-            if "message" not in parsed and "대사" in parsed:
-                parsed["message"] = parsed["대사"]
-            return parsed
         except json.JSONDecodeError:
-            return {"message": text[:80], "mood": fallback_mood}
+            # LLM sometimes prepends text like "Here is the JSON requested:"
+            # Try to extract a JSON object from within the response
+            match = re.search(r"\{[^{}]*\}", text)
+            if match:
+                try:
+                    parsed = json.loads(match.group())
+                except json.JSONDecodeError:
+                    return {"message": text[:80], "mood": fallback_mood}
+            else:
+                return {"message": text[:80], "mood": fallback_mood}
+        if "message" not in parsed and "대사" in parsed:
+            parsed["message"] = parsed["대사"]
+        return parsed
