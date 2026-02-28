@@ -365,8 +365,6 @@ class BoniApp(rumps.App):
             return
 
         try:
-            emoji = MOOD_EMOJI.get(self.current_mood, "😌")
-            self._emoji_field.setStringValue_(emoji)
             self._message_field.setStringValue_(f"\u201c{self.current_message}\u201d")
             self._expand_panel()
         except Exception as e:
@@ -392,22 +390,23 @@ class BoniApp(rumps.App):
             y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
-            # Update content view size + corner radius
-            self._effect_view.setFrame_(NSMakeRect(0, 0, w, h))
-            self._effect_view.layer().setCornerRadius_(16)
+            # Resize container + subviews
+            self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
 
-            # Position emoji for expanded
-            self._emoji_field.setFrame_(NSMakeRect(15, 25, 70, 65))
-            self._emoji_field.setFont_(self._NSFont.systemFontOfSize_(48))
+            # Image on left side
+            self._image_view.setFrame_(NSMakeRect(10, 15, 70, 80))
+
+            # Effect bubble behind text
+            self._effect_view.setFrame_(NSMakeRect(80, 5, w - 85, h - 10))
+            self._effect_view.layer().setCornerRadius_(16)
 
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.3)
             self.panel.animator().setFrame_display_(target_frame, True)
+            self._effect_view.animator().setAlphaValue_(0.95)
             self._message_field.animator().setAlphaValue_(1.0)
             self._boni_label.animator().setAlphaValue_(1.0)
             NSAnimationContext.endGrouping()
-
-            self.panel.invalidateShadow()
 
             self._collapsed = False
             self.panel.orderFront_(None)
@@ -441,22 +440,17 @@ class BoniApp(rumps.App):
             y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
-            # Shrink content view + round corners
-            self._effect_view.setFrame_(NSMakeRect(0, 0, w, h))
-            self._effect_view.layer().setCornerRadius_(24)
-
-            # Center emoji in small frame
-            self._emoji_field.setFrame_(NSMakeRect(0, 0, w, h))
-            self._emoji_field.setFont_(self._NSFont.systemFontOfSize_(28))
+            # Shrink to just the image
+            self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._image_view.setFrame_(NSMakeRect(0, 0, w, h))
 
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.3)
             self.panel.animator().setFrame_display_(target_frame, True)
+            self._effect_view.animator().setAlphaValue_(0.0)
             self._message_field.animator().setAlphaValue_(0.0)
             self._boni_label.animator().setAlphaValue_(0.0)
             NSAnimationContext.endGrouping()
-
-            self.panel.invalidateShadow()
 
             self._collapsed = True
 
@@ -468,14 +462,19 @@ class BoniApp(rumps.App):
     def _create_floating_window(self):
         """Create a native macOS floating panel — starts collapsed (48x48)."""
         try:
+            import objc
             from AppKit import (
                 NSBackingStoreBuffered,
                 NSColor,
                 NSFont,
+                NSImage,
+                NSImageScaleProportionallyUpOrDown,
+                NSImageView,
                 NSMakeRect,
                 NSPanel,
                 NSScreen,
                 NSTextField,
+                NSView,
                 NSVisualEffectView,
                 NSWindowStyleMaskBorderless,
                 NSFloatingWindowLevel,
@@ -483,10 +482,13 @@ class BoniApp(rumps.App):
                 NSWindowCollectionBehaviorStationary,
                 NSLineBreakByWordWrapping,
             )
-            from Foundation import NSObject
 
             # Store NSFont for use in expand/collapse
             self._NSFont = NSFont
+
+            # Load boni image
+            image_path = str(Path(__file__).parent / "image" / "boni.png")
+            boni_image = NSImage.alloc().initWithContentsOfFile_(image_path)
 
             # Start collapsed
             cw, ch = self._COLLAPSED_SIZE
@@ -497,7 +499,7 @@ class BoniApp(rumps.App):
             y = screen.size.height - ch - 45
             frame = NSMakeRect(x, y, cw, ch)
 
-            # Borderless floating panel
+            # Borderless floating panel — fully transparent, no shadow
             panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
                 frame,
                 NSWindowStyleMaskBorderless,
@@ -507,7 +509,7 @@ class BoniApp(rumps.App):
             panel.setLevel_(NSFloatingWindowLevel)
             panel.setOpaque_(False)
             panel.setBackgroundColor_(NSColor.clearColor())
-            panel.setHasShadow_(True)
+            panel.setHasShadow_(False)
             panel.setMovableByWindowBackground_(True)
             panel.setFloatingPanel_(True)
             panel.setBecomesKeyOnlyIfNeeded_(True)
@@ -516,36 +518,32 @@ class BoniApp(rumps.App):
                 NSWindowCollectionBehaviorCanJoinAllSpaces
                 | NSWindowCollectionBehaviorStationary
             )
-            panel.setAlphaValue_(0.95)
 
-            # Use expanded size for content so subviews are pre-laid-out
+            # Expanded content with vibrancy — hidden initially
             ew, eh = self._EXPANDED_SIZE
-            content_frame = NSMakeRect(0, 0, cw, ch)
-            effect = NSVisualEffectView.alloc().initWithFrame_(content_frame)
+            effect = NSVisualEffectView.alloc().initWithFrame_(
+                NSMakeRect(0, 0, cw, ch)
+            )
             effect.setMaterial_(12)  # NSVisualEffectMaterialPopover
             effect.setBlendingMode_(0)  # BehindWindow
             effect.setState_(1)  # Active
             effect.setWantsLayer_(True)
-            effect.layer().setCornerRadius_(24)  # round for collapsed
+            effect.layer().setCornerRadius_(16)
             effect.layer().setMasksToBounds_(True)
+            effect.setAlphaValue_(0.0)  # hidden when collapsed
             self._effect_view = effect
 
-            # Emoji — centered in collapsed state
-            self._emoji_field = NSTextField.alloc().initWithFrame_(
+            # Boni image view — centered in collapsed state
+            self._image_view = NSImageView.alloc().initWithFrame_(
                 NSMakeRect(0, 0, cw, ch)
             )
-            emoji = MOOD_EMOJI.get(self.current_mood, "😌")
-            self._emoji_field.setStringValue_(emoji)
-            self._emoji_field.setFont_(NSFont.systemFontOfSize_(28))
-            self._emoji_field.setAlignment_(1)  # NSCenterTextAlignment
-            self._emoji_field.setBezeled_(False)
-            self._emoji_field.setDrawsBackground_(False)
-            self._emoji_field.setEditable_(False)
-            self._emoji_field.setSelectable_(False)
+            if boni_image:
+                self._image_view.setImage_(boni_image)
+            self._image_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
 
             # Speech bubble message — hidden initially (alpha=0)
             self._message_field = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(90, 30, 210, 60)
+                NSMakeRect(10, 25, 210, 60)
             )
             self._message_field.setStringValue_(
                 f"\u201c{self.current_message}\u201d"
@@ -560,11 +558,11 @@ class BoniApp(rumps.App):
             self._message_field.cell().setLineBreakMode_(
                 NSLineBreakByWordWrapping
             )
-            self._message_field.setAlphaValue_(0.0)  # hidden when collapsed
+            self._message_field.setAlphaValue_(0.0)
 
             # "— boni" attribution — hidden initially
             self._boni_label = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(235, 8, 70, 18)
+                NSMakeRect(155, 5, 70, 18)
             )
             self._boni_label.setStringValue_("— boni")
             self._boni_label.setFont_(NSFont.systemFontOfSize_(10))
@@ -573,18 +571,14 @@ class BoniApp(rumps.App):
             self._boni_label.setEditable_(False)
             self._boni_label.setSelectable_(False)
             self._boni_label.setTextColor_(NSColor.secondaryLabelColor())
-            self._boni_label.setAlphaValue_(0.0)  # hidden when collapsed
+            self._boni_label.setAlphaValue_(0.0)
 
-            # Drag + click handler: custom transparent view
-            # - Drag moves the window (mouseDown+mouseDragged)
-            # - Click (no drag) expands when collapsed
+            # Drag + click handler using objc.super
             app_ref = self
 
-            from AppKit import NSView as _NSView
-
-            class _DragClickView(_NSView):
+            class _DragClickView(NSView):
                 def initWithFrame_(self, frame):
-                    self = super().initWithFrame_(frame)
+                    self = objc.super(_DragClickView, self).initWithFrame_(frame)
                     if self is None:
                         return None
                     self._dragged = False
@@ -597,7 +591,6 @@ class BoniApp(rumps.App):
 
                 def mouseDragged_(self, event):
                     self._dragged = True
-                    # Move window by delta
                     origin = self._mouse_down_origin
                     current = event.locationInWindow()
                     win = self.window()
@@ -618,13 +611,16 @@ class BoniApp(rumps.App):
             )
             self._drag_view = drag_view
 
-            # Assemble
-            effect.addSubview_(self._emoji_field)
+            # Container: transparent NSView holding image + effect bubble
+            container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, cw, ch))
+            container.setWantsLayer_(True)
+            container.addSubview_(self._image_view)
+            container.addSubview_(effect)
             effect.addSubview_(self._message_field)
             effect.addSubview_(self._boni_label)
-            effect.addSubview_(drag_view)
-            panel.setContentView_(effect)
-            panel.invalidateShadow()  # shadow follows rounded content
+            container.addSubview_(drag_view)
+            self._container_view = container
+            panel.setContentView_(container)
 
             if self.floating_visible:
                 panel.orderFront_(None)
