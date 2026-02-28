@@ -125,7 +125,7 @@ class BoniBrain:
             return self._quota_fallback(current_mood, None)
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3-flash-preview",
                 contents=PET_PROMPT.format(mood=current_mood),
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -145,7 +145,7 @@ class BoniBrain:
     def _generate(self, contents, fallback_mood: str) -> dict:
         """Call Gemini and parse strict JSON response."""
         response = self.client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
