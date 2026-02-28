@@ -1,5 +1,7 @@
 # Boni
 
+- GCP 프로젝트 ID: `gemini-hackathon-488801`
+
 ## Git 워크플로우
 
 - 4명이 **main 브랜치 하나**에서 직접 작업한다
