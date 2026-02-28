@@ -11,38 +11,17 @@ boni는 시스템 상태(CPU, RAM, 배터리, 실행 중인 앱, 시간대)를 �
 - macOS
 - Python 3.10+
 
-### 2. 클론 및 설치
+### 2. 빠른 세팅 (추천)
 
 ```bash
 git clone <repo-url>
 cd boni
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+./setup.sh
 ```
 
-### 3. Gemini API 키 설정
+venv 생성, 의존성 설치, API 키 입력까지 한 번에 진행됩니다.
 
-[Google AI Studio](https://aistudio.google.com/apikey)에서 API 키를 발급받으세요.
-
-**방법 A** — 메뉴바에서 설정 (추천):
-
-boni를 먼저 실행한 뒤, 😌 클릭 → 🔑 Set API Key 에 키를 붙여넣기 하세요.
-
-**방법 B** — 환경변수:
-
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-```
-
-**방법 C** — 설정 파일:
-
-```bash
-mkdir -p ~/.boni
-echo '{"api_key": "your-api-key-here"}' > ~/.boni/config.json
-```
-
-### 4. 실행
+### 3. 실행
 
 ```bash
 source .venv/bin/activate
