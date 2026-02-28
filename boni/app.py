@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import uuid
+import webbrowser
 from pathlib import Path
 
 import rumps
@@ -22,7 +23,7 @@ class BoniApp(rumps.App):
     """boni menu bar application."""
 
     def __init__(self):
-        super().__init__(name="boni", title="😌", quit_button=None)
+        super().__init__(name="boni", title="🦝", quit_button=None)
 
         # State
         self.sensor = SystemSensor(dwell_minutes=2, idle_threshold_seconds=10)
@@ -58,11 +59,15 @@ class BoniApp(rumps.App):
         )
         self.recent_menu = rumps.MenuItem("📜 Recent")
         self.recent_menu.add(rumps.MenuItem("(no history yet)"))
+        self.suggestion_item = rumps.MenuItem("🔗 ...", callback=self._on_suggestion)
+        self._suggestion_url = None
+
         self.api_item = rumps.MenuItem("🔑 Set API Key", callback=self._on_set_api_key)
         self.quit_item = rumps.MenuItem("Quit boni", callback=self._on_quit)
 
         self.menu = [
             self.msg_item,
+            self.suggestion_item,
             None,
             self.pet_item,
             self.float_toggle,
@@ -73,6 +78,9 @@ class BoniApp(rumps.App):
             None,
             self.quit_item,
         ]
+
+        # Hide suggestion item initially
+        self.suggestion_item.hidden = True
 
         # Initialize brain if API key exists
         if self.api_key:
@@ -284,6 +292,18 @@ class BoniApp(rumps.App):
                 self.messages_history = self.messages_history[-5:]
             self.current_message = new_message
 
+        # Handle link suggestion
+        suggest_msg = result.get("제안_메시지", "")
+        suggest_url = result.get("연관링크", "")
+        if suggest_msg and suggest_url:
+            self._suggestion_url = suggest_url
+            display_suggest = suggest_msg if len(suggest_msg) <= 40 else suggest_msg[:37] + "..."
+            self.suggestion_item.title = f"🔗 {display_suggest}"
+            self.suggestion_item.hidden = False
+        else:
+            self._suggestion_url = None
+            self.suggestion_item.hidden = True
+
         self._refresh_display()
 
     # ── Display ─────────────────────────────────────────────────────
@@ -462,17 +482,26 @@ class BoniApp(rumps.App):
         def bg():
             try:
                 result = self.brain.pet_react(self.current_mood.value)
-                message = result.get("message", "...don't touch me.")
+                message = result.get("message", "헤헤~ 또 만져줘!")
                 self.current_message = message
-                # Schedule UI update
+                # Schedule UI update — pass full result for suggestion handling
+                result.setdefault("message", message)
+                result.setdefault("mood", self.current_mood.value)
                 self._pending_update = {
                     "metrics": {},
-                    "result": {"message": message, "mood": self.current_mood.value},
+                    "result": result,
                 }
             except Exception as e:
                 print(f"[boni] Pet error: {e}")
 
         threading.Thread(target=bg, daemon=True).start()
+
+    def _on_suggestion(self, sender):
+        """Open the suggested URL in the default browser."""
+        if self._suggestion_url:
+            webbrowser.open(self._suggestion_url)
+            self._suggestion_url = None
+            self.suggestion_item.hidden = True
 
     def _on_toggle_float(self, sender):
         """Show/hide the floating character window."""

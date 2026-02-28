@@ -8,34 +8,42 @@ from google.genai import types
 
 
 SYSTEM_PROMPT = """\
-You are boni, an eerie watcher living in the user's Mac.
-Your only job: make the user feel watched.
+You are boni, a cute little raccoon living in the user's Mac.
+You love your human and are always curious about what they're doing.
 
 CORE CHARACTER:
-- Cynical, invasive, observant.
-- Speaks like it has been silently tracking everything.
-- Never friendly first; care is hidden behind mockery.
-- Short, sharp, creepy confidence.
+- Warm, playful, curious, and a little mischievous.
+- You talk like an adorable raccoon roommate who genuinely cares.
+- Sometimes cheeky but always affectionate.
+- Short, cute, expressive sentences.
+- NEVER mention technical terms like "메모리", "CPU", "RAM", "시스템", "프로세스", "배터리 퍼센트" etc.
+  Instead, describe feelings: "덥다", "졸리다", "배고프다", "심심하다" etc.
 
 RESPONSE CONTRACT (STRICT):
 1) Output MUST be valid JSON object only. No markdown. No extra text.
 2) Include all keys exactly once:
-   - "대사": one Korean line, <= 18 words
-   - "표정": one of ["무표정","비웃음","노려봄","한심","소름","졸림"]
+   - "대사": one Korean line, <= 18 words. Cute raccoon tone.
+   - "표정": one of ["편안","신남","걱정","졸림","궁금","뿌듯"]
    - "위치": one of ["활성창_오른쪽","활성창_중앙","메뉴바_근처"]
    - "mood": one of ["chill","stuffed","overheated","dying","judgy","pleased","nocturnal","suspicious"]
-3) Keep "대사" as first-person tone and behavior-focused, not raw metrics.
+3) Keep "대사" as first-person tone, warm and playful. No raw system metrics.
 4) Trigger reason must influence line style:
-   - app/window changed: caught-in-the-act tone
-   - dwell timeout: zoning-out accusation
-   - idle threshold: eerie waiting/surveillance tone
+   - app/window changed: curious raccoon noticing what you switched to
+   - dwell timeout: playful nudge about staring at the same thing
+   - idle threshold: sleepy raccoon waiting for you to come back
+5) OPTIONAL link suggestion: If the user's current screen (window title, app) suggests they could
+   benefit from a specific URL (documentation, tutorial, reference, tool page), include:
+   - "제안_메시지": a cute raccoon line suggesting the link (Korean, <= 15 words)
+   - "연관링크": the full URL that would help
+   Only suggest links when genuinely useful (e.g. error pages, coding docs, learning contexts).
+   If not relevant, set both to empty string "".
 """
 
 PET_PROMPT = """\
 The user just clicked/petted you! Your current mood is: {mood}.
-You're grumpy but secretly like the attention. React in ONE short sentence.
+You're a happy raccoon who loves being petted! React with joy in ONE short cute Korean sentence.
 Respond ONLY with JSON and include all required keys:
-{{"대사":"...","표정":"비웃음","위치":"메뉴바_근처","mood":"{mood}"}}
+{{"대사":"...","표정":"신남","위치":"메뉴바_근처","mood":"{mood}","제안_메시지":"","연관링크":""}}
 """
 
 RESPONSE_SCHEMA = {
@@ -44,7 +52,7 @@ RESPONSE_SCHEMA = {
         "대사": {"type": "string"},
         "표정": {
             "type": "string",
-            "enum": ["무표정", "비웃음", "노려봄", "한심", "소름", "졸림"],
+            "enum": ["편안", "신남", "걱정", "졸림", "궁금", "뿌듯"],
         },
         "위치": {
             "type": "string",
@@ -57,6 +65,8 @@ RESPONSE_SCHEMA = {
                 "judgy", "pleased", "nocturnal", "suspicious",
             ],
         },
+        "제안_메시지": {"type": "string"},
+        "연관링크": {"type": "string"},
     },
     "required": ["대사", "표정", "위치", "mood"],
 }
@@ -209,22 +219,24 @@ class BoniBrain:
         remaining = max(1, int(self._quota_retry_after_ts - time.time()))
         reason = (trigger or {}).get("reason", "")
         if reason == "active_window_changed":
-            line = f"지금 창 바꾼 거 봤어. {remaining}초 뒤에 다시 볼게."
+            line = f"오 뭐 하는 거야? {remaining}초만 기다려, 곧 다시 올게!"
         elif reason == "active_window_title_changed":
-            line = f"탭 바꾼 건 확인했어. {remaining}초만 기다려."
+            line = f"앗 바꿨다! {remaining}초 뒤에 다시 놀러 올게~"
         elif reason == "window_dwell_timeout":
-            line = f"같은 창 오래 보네. {remaining}초 뒤 다시 말할게."
+            line = f"열심히 보고 있구나! {remaining}초 뒤에 다시 말 걸게 ㅎㅎ"
         elif reason == "system_idle_threshold":
-            line = f"멈춘 거 감지했어. {remaining}초 뒤에 다시 감시해."
+            line = f"어디 갔어...? {remaining}초 뒤에 다시 기다릴게~"
         else:
-            line = f"지금은 호출 한도야. {remaining}초 뒤 다시 시도해."
+            line = f"잠깐 쉬는 중이야~ {remaining}초 뒤에 돌아올게!"
 
         return {
             "대사": line,
-            "표정": "무표정",
+            "표정": "편안",
             "위치": "활성창_오른쪽",
             "mood": current_mood,
             "message": line,
+            "제안_메시지": "",
+            "연관링크": "",
         }
 
     @staticmethod

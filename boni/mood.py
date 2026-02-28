@@ -16,26 +16,26 @@ class Mood(Enum):
 
 # Emoji shown in menu bar and floating window
 MOOD_EMOJI = {
-    Mood.CHILL: "😌",
-    Mood.STUFFED: "😤",
+    Mood.CHILL: "🦝",
+    Mood.STUFFED: "😮",
     Mood.OVERHEATED: "🥵",
-    Mood.DYING: "💀",
-    Mood.SUSPICIOUS: "👀",
-    Mood.JUDGY: "😒",
-    Mood.PLEASED: "☺️",
+    Mood.DYING: "😢",
+    Mood.SUSPICIOUS: "🧐",
+    Mood.JUDGY: "😏",
+    Mood.PLEASED: "😊",
     Mood.NOCTURNAL: "😴",
 }
 
 # Default messages before AI kicks in
 DEFAULT_MESSAGES = {
-    Mood.CHILL: "Just moved in. Nice Mac you got.",
-    Mood.STUFFED: "I just got here and it's already crowded...",
-    Mood.OVERHEATED: "Is it always this hot in here?!",
-    Mood.DYING: "I arrived just in time to watch us both die.",
-    Mood.SUSPICIOUS: "...what are you up to?",
-    Mood.JUDGY: "So this is what you do all day?",
-    Mood.PLEASED: "Oh, nice. We're organized today.",
-    Mood.NOCTURNAL: "You're still awake? ...I guess I am too now.",
+    Mood.CHILL: "안녕~ 나 boni야! 오늘도 같이 놀자 🦝",
+    Mood.STUFFED: "우와 여기 뭐가 이렇게 많아~ 복잡복잡!",
+    Mood.OVERHEATED: "헥헥... 여기 왜 이렇게 더워 ㅠㅠ",
+    Mood.DYING: "으앙... 힘들어... 충전해줘...!",
+    Mood.SUSPICIOUS: "오? 뭐 하는 거야~ 나도 보여줘!",
+    Mood.JUDGY: "에헤헤~ 지금 이거 보는 거야? ㅎㅎ",
+    Mood.PLEASED: "와~ 깔끔하다! 기분 좋아~",
+    Mood.NOCTURNAL: "쿨쿨... 아직 안 자? 나는 졸려...",
 }
 
 
