@@ -52,6 +52,7 @@ class BoniApp(rumps.App):
         self._COLLAPSED_SIZE = (48, 48)
         self._EXPANDED_SIZE = (320, 110)
         self._AUTO_COLLAPSE_SECONDS = 8
+        self._bubble_left = False  # True = bubble appears left of image
 
         # Load config (sets api_key and user_id)
         self._load_config()
@@ -314,17 +315,19 @@ class BoniApp(rumps.App):
                 self.messages_history = self.messages_history[-5:]
             self.current_message = new_message
 
-        # Handle proactive answer suggestion
+        # Handle proactive answer suggestion — show in bubble, not menu bar
         suggest_msg = result.get("제안_메시지", "")
         answer_content = result.get("정답_내용", "")
         if suggest_msg and answer_content:
             self._current_answer = answer_content
-            display_suggest = suggest_msg if len(suggest_msg) <= 40 else suggest_msg[:37] + "..."
-            self.suggestion_item.title = f"💡 {display_suggest}"
-            self.suggestion_item.hidden = False
+            display_suggest = suggest_msg if len(suggest_msg) <= 35 else suggest_msg[:32] + "..."
+            if hasattr(self, '_suggestion_field'):
+                self._suggestion_field.setStringValue_(f"💡 {display_suggest}")
         else:
             self._current_answer = ""
-            self.suggestion_item.hidden = True
+            if hasattr(self, '_suggestion_field'):
+                self._suggestion_field.setStringValue_("")
+        self.suggestion_item.hidden = True  # always hide menu bar suggestion
 
         self._refresh_display()
 
@@ -381,31 +384,58 @@ class BoniApp(rumps.App):
             self._collapse_timer = None
 
         try:
-            from AppKit import NSAnimationContext, NSMakeRect
+            from AppKit import NSAnimationContext, NSMakeRect, NSScreen
 
             w, h = self._EXPANDED_SIZE
-            # Expand from current position — keep top-right corner anchored
             cur = self.panel.frame()
-            x = cur.origin.x + cur.size.width - w
+
+            # Determine bubble direction based on screen position
+            screen = NSScreen.mainScreen().frame()
+            panel_center_x = cur.origin.x + cur.size.width / 2
+            screen_center_x = screen.size.width / 2
+            bubble_left = panel_center_x > screen_center_x
+            self._bubble_left = bubble_left
+
+            if bubble_left:
+                # Boni on right half → anchor right edge, bubble goes left
+                x = cur.origin.x + cur.size.width - w
+            else:
+                # Boni on left half → anchor left edge, bubble goes right
+                x = cur.origin.x
             y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
             # Resize container + subviews
             self._container_view.setFrame_(NSMakeRect(0, 0, w, h))
 
-            # Image on left side
-            self._image_view.setFrame_(NSMakeRect(10, 15, 70, 80))
-
-            # Effect bubble behind text
-            self._effect_view.setFrame_(NSMakeRect(80, 5, w - 85, h - 10))
+            if bubble_left:
+                # Image on right, bubble on left
+                self._image_view.setFrame_(NSMakeRect(w - 80, 15, 70, 80))
+                self._effect_view.setFrame_(NSMakeRect(5, 5, w - 85, h - 10))
+            else:
+                # Image on left, bubble on right
+                self._image_view.setFrame_(NSMakeRect(10, 15, 70, 80))
+                self._effect_view.setFrame_(NSMakeRect(80, 5, w - 85, h - 10))
             self._effect_view.layer().setCornerRadius_(16)
+
+            # Message and label (relative to effect view, same for both directions)
+            self._message_field.setFrame_(NSMakeRect(10, 25, 210, 60))
+            self._boni_label.setFrame_(NSMakeRect(155, 5, 70, 18))
+            self._suggestion_field.setFrame_(NSMakeRect(10, 5, 200, 18))
 
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.3)
             self.panel.animator().setFrame_display_(target_frame, True)
             self._effect_view.animator().setAlphaValue_(0.95)
             self._message_field.animator().setAlphaValue_(1.0)
-            self._boni_label.animator().setAlphaValue_(1.0)
+
+            # Show suggestion link or boni label
+            if self._current_answer:
+                self._suggestion_field.animator().setAlphaValue_(1.0)
+                self._boni_label.animator().setAlphaValue_(0.0)
+            else:
+                self._suggestion_field.animator().setAlphaValue_(0.0)
+                self._boni_label.animator().setAlphaValue_(1.0)
             NSAnimationContext.endGrouping()
 
             self._collapsed = False
@@ -434,9 +464,14 @@ class BoniApp(rumps.App):
             from AppKit import NSAnimationContext, NSMakeRect
 
             w, h = self._COLLAPSED_SIZE
-            # Collapse at current position — keep top-right corner anchored
             cur = self.panel.frame()
-            x = cur.origin.x + cur.size.width - w
+
+            if self._bubble_left:
+                # Anchor right edge (boni image is on the right)
+                x = cur.origin.x + cur.size.width - w
+            else:
+                # Anchor left edge (boni image is on the left)
+                x = cur.origin.x
             y = cur.origin.y + cur.size.height - h
             target_frame = NSMakeRect(x, y, w, h)
 
@@ -450,6 +485,7 @@ class BoniApp(rumps.App):
             self._effect_view.animator().setAlphaValue_(0.0)
             self._message_field.animator().setAlphaValue_(0.0)
             self._boni_label.animator().setAlphaValue_(0.0)
+            self._suggestion_field.animator().setAlphaValue_(0.0)
             NSAnimationContext.endGrouping()
 
             self._collapsed = True
@@ -573,6 +609,19 @@ class BoniApp(rumps.App):
             self._boni_label.setTextColor_(NSColor.secondaryLabelColor())
             self._boni_label.setAlphaValue_(0.0)
 
+            # Suggestion link — hidden initially, shown inside bubble
+            self._suggestion_field = NSTextField.alloc().initWithFrame_(
+                NSMakeRect(10, 5, 200, 18)
+            )
+            self._suggestion_field.setStringValue_("")
+            self._suggestion_field.setFont_(NSFont.systemFontOfSize_(11))
+            self._suggestion_field.setBezeled_(False)
+            self._suggestion_field.setDrawsBackground_(False)
+            self._suggestion_field.setEditable_(False)
+            self._suggestion_field.setSelectable_(False)
+            self._suggestion_field.setTextColor_(NSColor.systemBlueColor())
+            self._suggestion_field.setAlphaValue_(0.0)
+
             # Drag + click handler using objc.super
             app_ref = self
 
@@ -603,8 +652,11 @@ class BoniApp(rumps.App):
                         win.setFrameOrigin_(frame.origin)
 
                 def mouseUp_(self, event):
-                    if not self._dragged and app_ref._collapsed:
-                        app_ref._expand_panel()
+                    if not self._dragged:
+                        if app_ref._collapsed:
+                            app_ref._expand_panel()
+                        elif app_ref._current_answer:
+                            app_ref._on_suggestion(None)
 
             drag_view = _DragClickView.alloc().initWithFrame_(
                 NSMakeRect(0, 0, ew, eh)
@@ -618,6 +670,7 @@ class BoniApp(rumps.App):
             container.addSubview_(effect)
             effect.addSubview_(self._message_field)
             effect.addSubview_(self._boni_label)
+            effect.addSubview_(self._suggestion_field)
             container.addSubview_(drag_view)
             self._container_view = container
             panel.setContentView_(container)

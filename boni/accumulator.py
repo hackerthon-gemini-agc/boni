@@ -6,7 +6,7 @@ from collections import deque
 
 # Significance scores per event reason
 SIGNIFICANCE = {
-    "active_window_changed": 1.0,
+    "active_window_changed": 5.0,
     "active_window_title_changed": 0.5,
     "window_dwell_timeout": 3.0,
     "system_idle_threshold": 2.0,
@@ -17,7 +17,7 @@ SIGNIFICANCE = {
 }
 
 TRIGGER_THRESHOLD = 5.0
-MIN_INTERVAL_SECONDS = 15
+MIN_INTERVAL_SECONDS = 0
 MAX_INTERVAL_SECONDS = 120
 
 
