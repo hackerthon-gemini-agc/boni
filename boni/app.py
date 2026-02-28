@@ -49,8 +49,8 @@ class BoniApp(rumps.App):
         self._collapsed = True  # start collapsed
         self._collapse_timer = None
         self._pending_collapse = False
-        self._COLLAPSED_SIZE = (48, 48)
-        self._EXPANDED_SIZE = (320, 110)
+        self._COLLAPSED_SIZE = (96, 96)
+        self._EXPANDED_SIZE = (640, 220)
         self._AUTO_COLLAPSE_SECONDS = 8
         self._bubble_left = False  # True = bubble appears left of image
 
@@ -410,18 +410,18 @@ class BoniApp(rumps.App):
 
             if bubble_left:
                 # Image on right, bubble on left
-                self._image_view.setFrame_(NSMakeRect(w - 80, 15, 70, 80))
-                self._effect_view.setFrame_(NSMakeRect(5, 5, w - 85, h - 10))
+                self._image_view.setFrame_(NSMakeRect(w - 160, 30, 140, 160))
+                self._effect_view.setFrame_(NSMakeRect(10, 10, w - 170, h - 20))
             else:
                 # Image on left, bubble on right
-                self._image_view.setFrame_(NSMakeRect(10, 15, 70, 80))
-                self._effect_view.setFrame_(NSMakeRect(80, 5, w - 85, h - 10))
-            self._effect_view.layer().setCornerRadius_(16)
+                self._image_view.setFrame_(NSMakeRect(20, 30, 140, 160))
+                self._effect_view.setFrame_(NSMakeRect(160, 10, w - 170, h - 20))
+            self._effect_view.layer().setCornerRadius_(20)
 
             # Message and label (relative to effect view, same for both directions)
-            self._message_field.setFrame_(NSMakeRect(10, 25, 210, 60))
-            self._boni_label.setFrame_(NSMakeRect(155, 5, 70, 18))
-            self._suggestion_field.setFrame_(NSMakeRect(10, 5, 200, 18))
+            self._message_field.setFrame_(NSMakeRect(20, 50, 420, 120))
+            self._boni_label.setFrame_(NSMakeRect(310, 10, 140, 36))
+            self._suggestion_field.setFrame_(NSMakeRect(20, 10, 400, 36))
 
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.3)
@@ -584,7 +584,7 @@ class BoniApp(rumps.App):
             self._message_field.setStringValue_(
                 f"\u201c{self.current_message}\u201d"
             )
-            self._message_field.setFont_(NSFont.systemFontOfSize_(13))
+            self._message_field.setFont_(NSFont.systemFontOfSize_(18))
             self._message_field.setBezeled_(False)
             self._message_field.setDrawsBackground_(False)
             self._message_field.setEditable_(False)
@@ -601,7 +601,7 @@ class BoniApp(rumps.App):
                 NSMakeRect(155, 5, 70, 18)
             )
             self._boni_label.setStringValue_("— boni")
-            self._boni_label.setFont_(NSFont.systemFontOfSize_(10))
+            self._boni_label.setFont_(NSFont.systemFontOfSize_(14))
             self._boni_label.setBezeled_(False)
             self._boni_label.setDrawsBackground_(False)
             self._boni_label.setEditable_(False)
@@ -614,7 +614,7 @@ class BoniApp(rumps.App):
                 NSMakeRect(10, 5, 200, 18)
             )
             self._suggestion_field.setStringValue_("")
-            self._suggestion_field.setFont_(NSFont.systemFontOfSize_(11))
+            self._suggestion_field.setFont_(NSFont.systemFontOfSize_(15))
             self._suggestion_field.setBezeled_(False)
             self._suggestion_field.setDrawsBackground_(False)
             self._suggestion_field.setEditable_(False)
