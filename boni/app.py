@@ -12,6 +12,7 @@ import markdown
 
 import rumps
 
+from .accumulator import EventAccumulator
 from .brain import BoniBrain
 from .memory import BoniMemory
 from .mood import DEFAULT_MESSAGES, MOOD_EMOJI, Mood, determine_mood
@@ -30,6 +31,7 @@ class BoniApp(rumps.App):
 
         # State
         self.sensor = SystemSensor(dwell_minutes=2, idle_threshold_seconds=10)
+        self.accumulator = EventAccumulator()
         self.brain = None
         self.current_mood = Mood.CHILL
         self.current_message = "Waking up..."
@@ -42,6 +44,14 @@ class BoniApp(rumps.App):
         self._update_lock = threading.Lock()
         self._last_metrics = None  # cached for memory store
         self._last_reaction = None  # cached for memory store
+
+        # Collapsible UI state
+        self._collapsed = True  # start collapsed
+        self._collapse_timer = None
+        self._pending_collapse = False
+        self._COLLAPSED_SIZE = (48, 48)
+        self._EXPANDED_SIZE = (320, 110)
+        self._AUTO_COLLAPSE_SECONDS = 8
 
         # Load config (sets api_key and user_id)
         self._load_config()
@@ -181,13 +191,19 @@ class BoniApp(rumps.App):
 
     @rumps.timer(0.5)
     def _consume_sensor_events(self, _):
-        """Consume event-trigger candidates from sensor."""
+        """Consume event-trigger candidates from sensor via accumulator."""
         if not self.brain:
             return
         events = self.sensor.pop_events()
+        should_trigger = False
         for event in events:
-            print(f"[boni] consume trigger: {event.get('reason')} / {event.get('app_name')}")
-            self._trigger_ai_update(trigger_event=event)
+            print(f"[boni] accumulate: {event.get('reason')} / {event.get('app_name')}")
+            if self.accumulator.add_event(event):
+                should_trigger = True
+        if should_trigger:
+            accumulated = self.accumulator.consume()
+            print(f"[boni] trigger AI — score={accumulated['total_score']}, events={accumulated['event_count']}")
+            self._trigger_ai_update(accumulated_context=accumulated)
 
     @rumps.timer(MEMORY_STORE_INTERVAL)
     def _memory_store_timer(self, _):
@@ -212,10 +228,13 @@ class BoniApp(rumps.App):
             update = self._pending_update
             self._pending_update = None
             self._apply_ai_result(update)
+        if self._pending_collapse:
+            self._pending_collapse = False
+            self._collapse_panel()
 
     # ── Background AI update ────────────────────────────────────────
 
-    def _trigger_ai_update(self, trigger_event: dict | None = None):
+    def _trigger_ai_update(self, accumulated_context: dict | None = None):
         """Start a background thread to collect metrics, snapshot, and call Gemini."""
         if not self._update_lock.acquire(blocking=False):
             return  # Previous update still running
@@ -224,7 +243,7 @@ class BoniApp(rumps.App):
             try:
                 metrics = self.sensor.collect()
                 snapshot = None
-                if trigger_event is not None:
+                if accumulated_context is not None:
                     snapshot = self.sensor.capture_snapshot(delay_seconds=0.0)
                     print(
                         "[boni] snapshot:",
@@ -241,20 +260,20 @@ class BoniApp(rumps.App):
                     metrics=metrics,
                     current_mood=self.current_mood.value,
                     memories=memories,
-                    trigger=trigger_event,
+                    accumulated_context=accumulated_context,
                     snapshot=snapshot,
                 )
-                if trigger_event is not None:
+                if accumulated_context is not None:
                     print(
                         "[boni] react done:",
-                        trigger_event.get("reason"),
+                        accumulated_context.get("dominant_pattern"),
                         "->",
                         result.get("message") or result.get("대사") or "...",
                     )
                 self._pending_update = {
                     "metrics": metrics,
                     "result": result,
-                    "trigger": trigger_event,
+                    "accumulated_context": accumulated_context,
                     "snapshot": snapshot,
                 }
             except Exception as e:
@@ -339,7 +358,7 @@ class BoniApp(rumps.App):
         self._update_floating_window()
 
     def _update_floating_window(self):
-        """Update the floating character bubble content."""
+        """Update the floating character bubble content and expand."""
         if self.panel is None:
             return
         if not self.floating_visible:
@@ -349,14 +368,100 @@ class BoniApp(rumps.App):
             emoji = MOOD_EMOJI.get(self.current_mood, "😌")
             self._emoji_field.setStringValue_(emoji)
             self._message_field.setStringValue_(f"\u201c{self.current_message}\u201d")
-            self.panel.orderFront_(None)
+            self._expand_panel()
         except Exception as e:
             print(f"[boni] Float update error: {e}")
+
+    def _expand_panel(self):
+        """Animate panel from collapsed to expanded state."""
+        if self.panel is None:
+            return
+
+        # Cancel any pending collapse
+        if self._collapse_timer:
+            self._collapse_timer.cancel()
+            self._collapse_timer = None
+
+        try:
+            from AppKit import NSAnimationContext, NSMakeRect, NSScreen
+
+            screen = NSScreen.mainScreen().frame()
+            w, h = self._EXPANDED_SIZE
+            x = screen.size.width - w - 20
+            y = screen.size.height - h - 45
+            target_frame = NSMakeRect(x, y, w, h)
+
+            # Update content view size + corner radius
+            self._effect_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._effect_view.layer().setCornerRadius_(16)
+
+            # Position emoji for expanded
+            self._emoji_field.setFrame_(NSMakeRect(15, 25, 70, 65))
+            self._emoji_field.setFont_(self._NSFont.systemFontOfSize_(48))
+
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.3)
+            self.panel.animator().setFrame_display_(target_frame, True)
+            self._message_field.animator().setAlphaValue_(1.0)
+            self._boni_label.animator().setAlphaValue_(1.0)
+            NSAnimationContext.endGrouping()
+
+            self._collapsed = False
+            self.panel.orderFront_(None)
+
+            # Schedule auto-collapse
+            self._collapse_timer = threading.Timer(
+                self._AUTO_COLLAPSE_SECONDS, self._schedule_collapse
+            )
+            self._collapse_timer.daemon = True
+            self._collapse_timer.start()
+
+        except Exception as e:
+            print(f"[boni] Expand error: {e}")
+
+    def _schedule_collapse(self):
+        """Set flag for main thread to collapse (called from timer thread)."""
+        self._pending_collapse = True
+
+    def _collapse_panel(self):
+        """Animate panel from expanded to collapsed state."""
+        if self.panel is None or self._collapsed:
+            return
+
+        try:
+            from AppKit import NSAnimationContext, NSMakeRect, NSScreen
+
+            screen = NSScreen.mainScreen().frame()
+            w, h = self._COLLAPSED_SIZE
+            # Keep top-right alignment
+            x = screen.size.width - w - 20
+            y = screen.size.height - h - 45
+            target_frame = NSMakeRect(x, y, w, h)
+
+            # Shrink content view + round corners
+            self._effect_view.setFrame_(NSMakeRect(0, 0, w, h))
+            self._effect_view.layer().setCornerRadius_(24)
+
+            # Center emoji in small frame
+            self._emoji_field.setFrame_(NSMakeRect(0, 0, w, h))
+            self._emoji_field.setFont_(self._NSFont.systemFontOfSize_(28))
+
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.3)
+            self.panel.animator().setFrame_display_(target_frame, True)
+            self._message_field.animator().setAlphaValue_(0.0)
+            self._boni_label.animator().setAlphaValue_(0.0)
+            NSAnimationContext.endGrouping()
+
+            self._collapsed = True
+
+        except Exception as e:
+            print(f"[boni] Collapse error: {e}")
 
     # ── Floating window (PyObjC) ────────────────────────────────────
 
     def _create_floating_window(self):
-        """Create a native macOS floating panel with vibrancy."""
+        """Create a native macOS floating panel — starts collapsed (48x48)."""
         try:
             from AppKit import (
                 NSBackingStoreBuffered,
@@ -373,15 +478,19 @@ class BoniApp(rumps.App):
                 NSWindowCollectionBehaviorStationary,
                 NSLineBreakByWordWrapping,
             )
+            from Foundation import NSObject
 
-            # Dimensions
-            width, height = 320, 110
+            # Store NSFont for use in expand/collapse
+            self._NSFont = NSFont
+
+            # Start collapsed
+            cw, ch = self._COLLAPSED_SIZE
 
             # Position: top-right corner, below menu bar
             screen = NSScreen.mainScreen().frame()
-            x = screen.size.width - width - 20
-            y = screen.size.height - height - 45
-            frame = NSMakeRect(x, y, width, height)
+            x = screen.size.width - cw - 20
+            y = screen.size.height - ch - 45
+            frame = NSMakeRect(x, y, cw, ch)
 
             # Borderless floating panel
             panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -404,29 +513,32 @@ class BoniApp(rumps.App):
             )
             panel.setAlphaValue_(0.95)
 
-            # Visual effect view — blurred translucent background
-            content_frame = NSMakeRect(0, 0, width, height)
+            # Use expanded size for content so subviews are pre-laid-out
+            ew, eh = self._EXPANDED_SIZE
+            content_frame = NSMakeRect(0, 0, cw, ch)
             effect = NSVisualEffectView.alloc().initWithFrame_(content_frame)
             effect.setMaterial_(12)  # NSVisualEffectMaterialPopover
             effect.setBlendingMode_(0)  # BehindWindow
             effect.setState_(1)  # Active
             effect.setWantsLayer_(True)
-            effect.layer().setCornerRadius_(16)
+            effect.layer().setCornerRadius_(24)  # round for collapsed
             effect.layer().setMasksToBounds_(True)
+            self._effect_view = effect
 
-            # Large emoji
+            # Emoji — centered in collapsed state
             self._emoji_field = NSTextField.alloc().initWithFrame_(
-                NSMakeRect(15, 25, 70, 65)
+                NSMakeRect(0, 0, cw, ch)
             )
             emoji = MOOD_EMOJI.get(self.current_mood, "😌")
             self._emoji_field.setStringValue_(emoji)
-            self._emoji_field.setFont_(NSFont.systemFontOfSize_(48))
+            self._emoji_field.setFont_(NSFont.systemFontOfSize_(28))
+            self._emoji_field.setAlignment_(1)  # NSCenterTextAlignment
             self._emoji_field.setBezeled_(False)
             self._emoji_field.setDrawsBackground_(False)
             self._emoji_field.setEditable_(False)
             self._emoji_field.setSelectable_(False)
 
-            # Speech bubble message
+            # Speech bubble message — hidden initially (alpha=0)
             self._message_field = NSTextField.alloc().initWithFrame_(
                 NSMakeRect(90, 30, 210, 60)
             )
@@ -443,30 +555,52 @@ class BoniApp(rumps.App):
             self._message_field.cell().setLineBreakMode_(
                 NSLineBreakByWordWrapping
             )
+            self._message_field.setAlphaValue_(0.0)  # hidden when collapsed
 
-            # "— boni" attribution
-            boni_label = NSTextField.alloc().initWithFrame_(
+            # "— boni" attribution — hidden initially
+            self._boni_label = NSTextField.alloc().initWithFrame_(
                 NSMakeRect(235, 8, 70, 18)
             )
-            boni_label.setStringValue_("— boni")
-            boni_label.setFont_(NSFont.systemFontOfSize_(10))
-            boni_label.setBezeled_(False)
-            boni_label.setDrawsBackground_(False)
-            boni_label.setEditable_(False)
-            boni_label.setSelectable_(False)
-            boni_label.setTextColor_(NSColor.secondaryLabelColor())
+            self._boni_label.setStringValue_("— boni")
+            self._boni_label.setFont_(NSFont.systemFontOfSize_(10))
+            self._boni_label.setBezeled_(False)
+            self._boni_label.setDrawsBackground_(False)
+            self._boni_label.setEditable_(False)
+            self._boni_label.setSelectable_(False)
+            self._boni_label.setTextColor_(NSColor.secondaryLabelColor())
+            self._boni_label.setAlphaValue_(0.0)  # hidden when collapsed
+
+            # Click handler — create a clickable transparent button overlay
+            app_ref = self
+
+            class _ClickDelegate(NSObject):
+                def handleClick_(self, sender):
+                    if app_ref._collapsed:
+                        app_ref._expand_panel()
+
+            self._click_delegate = _ClickDelegate.alloc().init()
+
+            from AppKit import NSButton, NSButtonTypeMomentaryLight
+            click_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, ew, eh))
+            click_btn.setTransparent_(True)
+            click_btn.setButtonType_(NSButtonTypeMomentaryLight)
+            click_btn.setTarget_(self._click_delegate)
+            click_btn.setAction_("handleClick:")
+            self._click_button = click_btn
 
             # Assemble
             effect.addSubview_(self._emoji_field)
             effect.addSubview_(self._message_field)
-            effect.addSubview_(boni_label)
+            effect.addSubview_(self._boni_label)
+            effect.addSubview_(click_btn)
             panel.setContentView_(effect)
 
             if self.floating_visible:
                 panel.orderFront_(None)
 
             self.panel = panel
-            print("[boni] Floating window created")
+            self._collapsed = True
+            print("[boni] Floating window created (collapsed)")
 
         except Exception as e:
             print(f"[boni] Could not create floating window: {e}")

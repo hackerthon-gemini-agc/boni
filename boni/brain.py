@@ -27,11 +27,20 @@ RESPONSE CONTRACT (STRICT):
    - "위치": one of ["활성창_오른쪽","활성창_중앙","메뉴바_근처"]
    - "mood": one of ["chill","stuffed","overheated","dying","judgy","pleased","nocturnal","suspicious"]
 3) Keep "대사" as first-person tone, warm and playful. No raw system metrics.
-4) Trigger reason must influence line style:
-   - app/window changed: curious raccoon noticing what you switched to
-   - dwell timeout: playful nudge about staring at the same thing
-   - idle threshold: sleepy raccoon waiting for you to come back
-5) OPTIONAL proactive help: When the user's screen suggests they are stuck or struggling with
+4) Dominant pattern must influence line style:
+   - active_window_changed / rapid_app_switching: curious raccoon noticing you're bouncing around
+   - window_dwell_timeout: playful nudge about staring at the same thing
+   - system_idle_threshold: sleepy raccoon waiting for you to come back
+   - frustration_pattern: warm empathy, encouragement
+   - sigh_detected: gentle concern, offer comfort
+   - high_typing_burst: impressed by the typing energy
+5) Behavior pattern interpretation:
+   - High backspace ratio + rapid clicks: frustration — empathize and encourage
+   - Many app switches in short time: distracted or searching for something — be curious
+   - Sigh detected: tired or stressed — offer comfort gently
+   - Long typing burst then pause: finished a task — praise and celebrate
+   - High significance score: something notable happened — react with energy
+6) OPTIONAL proactive help: When the user's screen suggests they are stuck or struggling with
    an everyday task (shopping comparison, writing email, reading long text, filling forms,
    decision-making, etc.), proactively offer help:
    - "제안_메시지": a cheeky raccoon one-liner offering to help (Korean, <= 15 words).
@@ -88,12 +97,12 @@ class BoniBrain:
         metrics: dict,
         current_mood: str,
         memories: list | None = None,
-        trigger: dict | None = None,
+        accumulated_context: dict | None = None,
         snapshot: dict | None = None,
     ) -> dict:
         """Generate a reaction to the current system state."""
         if self._in_quota_cooldown():
-            return self._quota_fallback(current_mood, trigger)
+            return self._quota_fallback(current_mood, accumulated_context)
 
         battery_info = (
             f"{metrics['battery_percent']}%"
@@ -102,8 +111,10 @@ class BoniBrain:
             else "N/A (desktop Mac, always powered)"
         )
 
-        trigger_info = trigger or {}
+        acc = accumulated_context or {}
         snapshot_info = snapshot or {}
+        behavior = acc.get("behavior_stats", {})
+
         prompt = (
             f"System state right now:\n"
             f"- CPU load: {metrics['cpu_percent']}%\n"
@@ -113,15 +124,32 @@ class BoniBrain:
             f"- Running apps: {metrics['running_apps']}\n"
             f"- Time: {metrics['hour']}:{metrics['minute']:02d}\n"
             f"- Previous mood: {current_mood}\n\n"
-            f"Trigger context:\n"
-            f"- reason: {trigger_info.get('reason', 'manual_or_periodic')}\n"
-            f"- app_name: {trigger_info.get('app_name', metrics['active_app'])}\n"
-            f"- window_title: {trigger_info.get('window_title', '')}\n"
-            f"- idle_seconds: {trigger_info.get('idle_seconds', 0)}\n"
-            f"- dwell_seconds: {trigger_info.get('dwell_seconds', 0)}\n"
-            f"- capture_scope: {snapshot_info.get('scope', 'none')}\n\n"
-            f"Return strict JSON contract."
         )
+
+        if acc:
+            prompt += (
+                f"User behavior summary (accumulated over {acc.get('duration_seconds', 0)}s):\n"
+                f"- Dominant pattern: {acc.get('dominant_pattern', 'none')}\n"
+                f"- Significance score: {acc.get('total_score', 0)}\n"
+                f"- App switches: {acc.get('app_switches', 0)}\n"
+            )
+            if behavior.get("clicks_per_min"):
+                prompt += f"- Mouse clicks/min: {behavior['clicks_per_min']}\n"
+            if behavior.get("typing_speed"):
+                prompt += f"- Typing speed: {behavior['typing_speed']} keys/min\n"
+            if behavior.get("backspace_ratio") is not None:
+                prompt += f"- Backspace ratio: {behavior['backspace_ratio']}\n"
+            if behavior.get("sighs"):
+                prompt += f"- Sighs detected: {behavior['sighs']}\n"
+
+            recent = acc.get("recent_events", [])
+            if recent:
+                prompt += f"- Recent events: {[e.get('reason', '') for e in recent]}\n"
+        else:
+            prompt += "Trigger: manual or startup (no accumulated context yet)\n"
+
+        prompt += f"\n- capture_scope: {snapshot_info.get('scope', 'none')}\n\n"
+        prompt += "Return strict JSON contract."
 
         # Inject past memories if available
         if memories:
@@ -145,7 +173,6 @@ class BoniBrain:
                 )
             return self._generate(contents, current_mood)
         except Exception as e:
-            # Fallback: if image path/part handling fails, retry with text-only prompt.
             print(f"[boni brain] react error (with snapshot): {e}")
             try:
                 return self._generate(prompt, current_mood)
@@ -153,7 +180,7 @@ class BoniBrain:
                 print(f"[boni brain] react retry error (text-only): {retry_error}")
                 self._record_quota_backoff(retry_error)
                 if self._in_quota_cooldown():
-                    return self._quota_fallback(current_mood, trigger)
+                    return self._quota_fallback(current_mood, accumulated_context)
                 return {"message": "...my brain froze for a sec.", "mood": current_mood}
 
     def pet_react(self, current_mood: str) -> dict:
@@ -219,17 +246,19 @@ class BoniBrain:
                 return max(5, int(match.group(1)))
         return 60
 
-    def _quota_fallback(self, current_mood: str, trigger: dict | None) -> dict:
+    def _quota_fallback(self, current_mood: str, accumulated_context: dict | None) -> dict:
         remaining = max(1, int(self._quota_retry_after_ts - time.time()))
-        reason = (trigger or {}).get("reason", "")
-        if reason == "active_window_changed":
+        dominant = (accumulated_context or {}).get("dominant_pattern", "")
+        if dominant in ("active_window_changed", "rapid_app_switching"):
             line = f"오 뭐 하는 거야? {remaining}초만 기다려, 곧 다시 올게!"
-        elif reason == "active_window_title_changed":
+        elif dominant == "active_window_title_changed":
             line = f"앗 바꿨다! {remaining}초 뒤에 다시 놀러 올게~"
-        elif reason == "window_dwell_timeout":
+        elif dominant == "window_dwell_timeout":
             line = f"열심히 보고 있구나! {remaining}초 뒤에 다시 말 걸게 ㅎㅎ"
-        elif reason == "system_idle_threshold":
+        elif dominant in ("system_idle_threshold",):
             line = f"어디 갔어...? {remaining}초 뒤에 다시 기다릴게~"
+        elif dominant in ("frustration_pattern", "sigh_detected"):
+            line = f"힘들어 보여... {remaining}초 뒤에 다시 올게, 잠깐 쉬어!"
         else:
             line = f"잠깐 쉬는 중이야~ {remaining}초 뒤에 돌아올게!"
 
