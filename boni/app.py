@@ -15,9 +15,7 @@ from .sensor import SystemSensor
 CONFIG_DIR = Path.home() / ".boni"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-UPDATE_INTERVAL = 30  # seconds between AI updates
 MEMORY_STORE_INTERVAL = 60  # seconds between memory stores
-
 
 class BoniApp(rumps.App):
     """boni menu bar application."""
@@ -26,7 +24,7 @@ class BoniApp(rumps.App):
         super().__init__(name="boni", title="😌", quit_button=None)
 
         # State
-        self.sensor = SystemSensor()
+        self.sensor = SystemSensor(dwell_minutes=2, idle_threshold_seconds=10)
         self.brain = None
         self.current_mood = Mood.CHILL
         self.current_message = "Waking up..."
@@ -143,17 +141,22 @@ class BoniApp(rumps.App):
         """One-shot: create floating window and trigger first AI update."""
         timer.stop()
         self._create_floating_window()
+        self.sensor.start_watchers()
         if self.brain:
             self._trigger_ai_update()
         elif not self.api_key:
             self.current_message = "Set your Gemini API key to wake me up! (🔑 in menu)"
             self._refresh_display()
 
-    @rumps.timer(UPDATE_INTERVAL)
-    def _periodic_update(self, _):
-        """Periodic AI update every 30 seconds."""
-        if self.brain:
-            self._trigger_ai_update()
+    @rumps.timer(0.5)
+    def _consume_sensor_events(self, _):
+        """Consume event-trigger candidates from sensor."""
+        if not self.brain:
+            return
+        events = self.sensor.pop_events()
+        for event in events:
+            print(f"[boni] consume trigger: {event.get('reason')} / {event.get('app_name')}")
+            self._trigger_ai_update(trigger_event=event)
 
     @rumps.timer(MEMORY_STORE_INTERVAL)
     def _memory_store_timer(self, _):
@@ -181,22 +184,48 @@ class BoniApp(rumps.App):
 
     # ── Background AI update ────────────────────────────────────────
 
-    def _trigger_ai_update(self):
-        """Start a background thread to collect metrics + call Gemini."""
+    def _trigger_ai_update(self, trigger_event: dict | None = None):
+        """Start a background thread to collect metrics, snapshot, and call Gemini."""
         if not self._update_lock.acquire(blocking=False):
             return  # Previous update still running
 
         def bg():
             try:
                 metrics = self.sensor.collect()
+                snapshot = None
+                if trigger_event is not None:
+                    snapshot = self.sensor.capture_snapshot()
+                    print(
+                        "[boni] snapshot:",
+                        snapshot.get("scope"),
+                        snapshot.get("path"),
+                    )
 
                 # Recall past memories if memory system is active
                 memories = None
                 if self.memory:
                     memories = self.memory.recall(metrics, self.current_mood.value)
 
-                result = self.brain.react(metrics, self.current_mood.value, memories)
-                self._pending_update = {"metrics": metrics, "result": result}
+                result = self.brain.react(
+                    metrics=metrics,
+                    current_mood=self.current_mood.value,
+                    memories=memories,
+                    trigger=trigger_event,
+                    snapshot=snapshot,
+                )
+                if trigger_event is not None:
+                    print(
+                        "[boni] react done:",
+                        trigger_event.get("reason"),
+                        "->",
+                        result.get("message") or result.get("대사") or "...",
+                    )
+                self._pending_update = {
+                    "metrics": metrics,
+                    "result": result,
+                    "trigger": trigger_event,
+                    "snapshot": snapshot,
+                }
             except Exception as e:
                 print(f"[boni] BG update error: {e}")
             finally:
@@ -223,7 +252,7 @@ class BoniApp(rumps.App):
         self.current_mood = new_mood
 
         # Update message + history
-        new_message = result.get("message", "...")
+        new_message = result.get("message") or result.get("line") or result.get("대사") or "..."
         if new_message and new_message != self.current_message:
             if self.current_message and not self.current_message.startswith("Set your"):
                 self.messages_history.append(
@@ -463,6 +492,7 @@ class BoniApp(rumps.App):
 
     def _on_quit(self, sender):
         """Quit boni."""
+        self.sensor.stop_watchers()
         if self.panel:
             self.panel.orderOut_(None)
         rumps.quit_application()
